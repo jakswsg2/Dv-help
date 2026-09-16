@@ -28,6 +28,12 @@ import {
   generateHestiaTemplateInstallerBash,
   generateHestiaQuickAppPhp,
   generateHestiaQuickAppInstallerBash,
+  generateHestiaDockerComposeContent,
+  generateHestiaDockerNginxTpl,
+  generateHestiaDockerNginxStpl,
+  generateHestiaDvHelpQuickAppPhp,
+  generateHestiaDvHelpQuickAppRegisterBash,
+  generateDeployHestiaBash,
 } from '../utils/hestiaConfigGenerator';
 
 interface HestiaConfigModalProps {
@@ -50,6 +56,7 @@ export const HestiaConfigModal: React.FC<HestiaConfigModalProps> = ({
   const [user, setUser] = useState('admin');
   const [ip, setIp] = useState('129.151.138.90');
   const [mode, setMode] = useState<
+    | 'hestia_docker_app'
     | 'hestia_quick_app'
     | 'hestia_template_tpl'
     | 'hestia_bash_installer'
@@ -58,7 +65,12 @@ export const HestiaConfigModal: React.FC<HestiaConfigModalProps> = ({
     | 'proxy_docker'
     | 'apache_spa'
     | 'json_package'
-  >('hestia_quick_app');
+  >('hestia_docker_app');
+  const [dockerSubtype, setDockerSubtype] = useState<
+    'deploy_script' | 'register_script' | 'compose' | 'php_class' | 'nginx_stpl' | 'nginx_tpl'
+  >('deploy_script');
+  const [gitRepo, setGitRepo] = useState('https://github.com/jakswsg2/Dv-help.git');
+  const [backendPort, setBackendPort] = useState<number>(8000);
   const [quickAppSubtype, setQuickAppSubtype] = useState<'installer_script' | 'php_class'>('installer_script');
   const [templateType, setTemplateType] = useState<'tpl' | 'stpl'>('tpl');
   const [dockerPort, setDockerPort] = useState<number>(3000);
@@ -75,6 +87,8 @@ export const HestiaConfigModal: React.FC<HestiaConfigModalProps> = ({
     ip: ip.trim() || '129.151.138.90',
     mode,
     dockerPort: Number(dockerPort) || 3000,
+    backendPort: Number(backendPort) || 8000,
+    gitRepo: gitRepo.trim() || 'https://github.com/jakswsg2/Dv-help.git',
     sslEnabled,
     exportApplicantsData,
   };
@@ -84,7 +98,33 @@ export const HestiaConfigModal: React.FC<HestiaConfigModalProps> = ({
   let filename = '';
   let mimeType = 'text/plain';
 
-  if (mode === 'hestia_quick_app') {
+  if (mode === 'hestia_docker_app') {
+    if (dockerSubtype === 'deploy_script') {
+      generatedContent = generateDeployHestiaBash(currentOptions);
+      filename = 'deploy-hestia.sh';
+      mimeType = 'text/x-shellscript';
+    } else if (dockerSubtype === 'compose') {
+      generatedContent = generateHestiaDockerComposeContent(currentOptions);
+      filename = 'docker-compose.hestia.yml';
+      mimeType = 'text/yaml';
+    } else if (dockerSubtype === 'php_class') {
+      generatedContent = generateHestiaDvHelpQuickAppPhp(currentOptions);
+      filename = 'DVHelpSetup.php';
+      mimeType = 'application/x-httpd-php';
+    } else if (dockerSubtype === 'nginx_stpl') {
+      generatedContent = generateHestiaDockerNginxStpl('dv-help-docker', currentOptions.dockerPort, currentOptions.backendPort);
+      filename = 'dv-help-docker.stpl';
+      mimeType = 'text/plain';
+    } else if (dockerSubtype === 'nginx_tpl') {
+      generatedContent = generateHestiaDockerNginxTpl('dv-help-docker', currentOptions.dockerPort, currentOptions.backendPort);
+      filename = 'dv-help-docker.tpl';
+      mimeType = 'text/plain';
+    } else {
+      generatedContent = generateHestiaDvHelpQuickAppRegisterBash(currentOptions);
+      filename = 'register-hestia-dvhelp.sh';
+      mimeType = 'text/x-shellscript';
+    }
+  } else if (mode === 'hestia_quick_app') {
     if (quickAppSubtype === 'php_class') {
       generatedContent = generateHestiaQuickAppPhp();
       filename = 'DVPrepSetup.php';
@@ -147,12 +187,23 @@ export const HestiaConfigModal: React.FC<HestiaConfigModalProps> = ({
 
   // Special full package bundle download
   const handleDownloadFullBundle = () => {
-    const installer = generateHestiaTemplateInstallerBash(currentOptions);
-    const blob = new Blob([installer], { type: 'text/x-shellscript' });
+    let script = '';
+    let name = 'install-hestia-dvprep.sh';
+    if (mode === 'hestia_docker_app') {
+      script = generateHestiaDvHelpQuickAppRegisterBash(currentOptions);
+      name = 'register-hestia-dvhelp.sh';
+    } else if (mode === 'hestia_quick_app') {
+      script = generateHestiaQuickAppInstallerBash(currentOptions);
+      name = 'register-hestia-quick-install.sh';
+    } else {
+      script = generateHestiaTemplateInstallerBash(currentOptions);
+      name = 'install-hestia-dvprep.sh';
+    }
+    const blob = new Blob([script], { type: 'text/x-shellscript' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'install-hestia-dvprep.sh';
+    a.download = name;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -272,7 +323,28 @@ export const HestiaConfigModal: React.FC<HestiaConfigModalProps> = ({
               </label>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-4 gap-2.5">
-                {/* Mode 0: Hestia Quick Install WebApp */}
+                {/* Mode 0: DV-Help Full-Stack Docker Quick App */}
+                <button
+                  type="button"
+                  onClick={() => setMode('hestia_docker_app')}
+                  className={`p-3 rounded-xl border text-left rtl:text-right transition-all cursor-pointer flex flex-col justify-between ${
+                    mode === 'hestia_docker_app'
+                      ? 'border-indigo-600 bg-indigo-50/90 dark:bg-indigo-950/60 text-indigo-950 dark:text-indigo-100 shadow-xs ring-2 ring-indigo-500'
+                      : 'border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/40 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 font-bold text-xs">
+                    <Layers className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                    <span>{isAr ? 'تطبيق DV-Help كامل (Docker)' : 'DV-Help Full-Stack (Docker)'}</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1.5 leading-snug">
+                    {isAr
+                      ? 'Next.js + FastAPI + Postgres + Redis + MinIO بدون تعارض منافذ Caddy (مع Hestia SSL)'
+                      : 'Next.js + FastAPI + Postgres + Redis + MinIO without Caddy port clash (Hestia SSL)'}
+                  </p>
+                </button>
+
+                {/* Mode 1: Hestia Quick Install WebApp */}
                 <button
                   type="button"
                   onClick={() => setMode('hestia_quick_app')}
@@ -284,10 +356,10 @@ export const HestiaConfigModal: React.FC<HestiaConfigModalProps> = ({
                 >
                   <div className="flex items-center gap-2 font-bold text-xs">
                     <Zap className="w-4 h-4 text-amber-500 fill-amber-500" />
-                    <span>{isAr ? 'تطبيق تثبيت سريع (Quick Install)' : 'Quick Install WebApp'}</span>
+                    <span>{isAr ? 'تطبيق SPA سريع (Quick Install)' : 'Static SPA Quick App'}</span>
                   </div>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1.5 leading-snug">
-                    {isAr ? 'كلاس PHP + سكريبت تسجيل ليظهر التطبيق في متجر Quick Install بهيستيا' : 'HestiaCP WebApp installer class & 1-click registration'}
+                    {isAr ? 'كلاس PHP + سكريبت تسجيل لتثبيت ملفات الـ SPA مباشرة في public_html' : 'HestiaCP WebApp installer for direct static deployment'}
                   </p>
                 </button>
 
@@ -428,6 +500,113 @@ export const HestiaConfigModal: React.FC<HestiaConfigModalProps> = ({
 
             {/* Extra Options for Selected Mode */}
             <div className="flex flex-wrap items-center gap-4 p-3 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 rounded-xl text-xs">
+              {mode === 'hestia_docker_app' && (
+                <div className="w-full flex flex-col gap-3">
+                  <div className="flex flex-wrap items-center gap-2 font-medium text-slate-700 dark:text-slate-300">
+                    <span className="font-bold text-indigo-600 dark:text-indigo-400">{isAr ? 'الملف المعروض:' : 'View / Export File:'}</span>
+                    <div className="inline-flex flex-wrap rounded-lg border border-slate-300 dark:border-slate-700 p-0.5 bg-white dark:bg-slate-900">
+                      <button
+                        type="button"
+                        onClick={() => setDockerSubtype('deploy_script')}
+                        className={`px-2.5 py-1 text-xs rounded-md font-mono cursor-pointer ${
+                          dockerSubtype === 'deploy_script'
+                            ? 'bg-indigo-600 text-white font-bold'
+                            : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
+                        }`}
+                      >
+                        deploy-hestia.sh (Automated Deploy)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDockerSubtype('register_script')}
+                        className={`px-2.5 py-1 text-xs rounded-md font-mono cursor-pointer ${
+                          dockerSubtype === 'register_script'
+                            ? 'bg-indigo-600 text-white font-bold'
+                            : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
+                        }`}
+                      >
+                        register-hestia-dvhelp.sh (Register)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDockerSubtype('compose')}
+                        className={`px-2.5 py-1 text-xs rounded-md font-mono cursor-pointer ${
+                          dockerSubtype === 'compose'
+                            ? 'bg-indigo-600 text-white font-bold'
+                            : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
+                        }`}
+                      >
+                        docker-compose.hestia.yml (Docker)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDockerSubtype('php_class')}
+                        className={`px-2.5 py-1 text-xs rounded-md font-mono cursor-pointer ${
+                          dockerSubtype === 'php_class'
+                            ? 'bg-indigo-600 text-white font-bold'
+                            : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
+                        }`}
+                      >
+                        DVHelpSetup.php (Hestia App Class)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDockerSubtype('nginx_stpl')}
+                        className={`px-2.5 py-1 text-xs rounded-md font-mono cursor-pointer ${
+                          dockerSubtype === 'nginx_stpl'
+                            ? 'bg-indigo-600 text-white font-bold'
+                            : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
+                        }`}
+                      >
+                        dv-help-docker.stpl (SSL Proxy)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDockerSubtype('nginx_tpl')}
+                        className={`px-2.5 py-1 text-xs rounded-md font-mono cursor-pointer ${
+                          dockerSubtype === 'nginx_tpl'
+                            ? 'bg-indigo-600 text-white font-bold'
+                            : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
+                        }`}
+                      >
+                        dv-help-docker.tpl (HTTP Proxy)
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Ports & Git Repo Configuration */}
+                  <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-slate-200 dark:border-slate-800 text-[11px]">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-slate-500 font-semibold">{isAr ? 'مستودع GitHub:' : 'Git Repo:'}</span>
+                      <input
+                        type="text"
+                        value={gitRepo}
+                        onChange={(e) => setGitRepo(e.target.value)}
+                        className="w-64 px-2 py-1 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-xs font-mono"
+                      />
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-slate-500 font-semibold">{isAr ? 'منفذ الواجهة (Next.js):' : 'Frontend Port:'}</span>
+                      <input
+                        type="number"
+                        value={dockerPort}
+                        onChange={(e) => setDockerPort(Number(e.target.value))}
+                        className="w-20 px-2 py-1 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-xs font-mono"
+                      />
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-slate-500 font-semibold">{isAr ? 'منفذ الواجهة البرمجية (FastAPI):' : 'Backend Port:'}</span>
+                      <input
+                        type="number"
+                        value={backendPort}
+                        onChange={(e) => setBackendPort(Number(e.target.value))}
+                        className="w-20 px-2 py-1 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-xs font-mono"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {mode === 'hestia_quick_app' && (
                 <div className="flex items-center gap-2 font-medium text-slate-700 dark:text-slate-300">
                   <span>{isAr ? 'الملف المعروض:' : 'View / Export File:'}</span>
@@ -603,7 +782,25 @@ export const HestiaConfigModal: React.FC<HestiaConfigModalProps> = ({
                 </span>
               </h4>
               <div dir="ltr" className="space-y-1.5 font-mono text-[11px] text-slate-600 dark:text-slate-300">
-                {mode === 'hestia_quick_app' ? (
+                {mode === 'hestia_docker_app' ? (
+                  <>
+                    <p className="bg-white dark:bg-slate-900 p-2 rounded border border-slate-200 dark:border-slate-800 select-all text-indigo-600 dark:text-indigo-400 font-semibold">
+                      # الخيار A: نشر فوري تلقائي بالكامل (استنساخ Git + تجهيز .env + تثبيت Docker + إعداد Nginx Reverse Proxy):
+                    </p>
+                    <p className="bg-white dark:bg-slate-900 p-2 rounded border border-slate-200 dark:border-slate-800 select-all font-bold text-slate-800 dark:text-slate-100">
+                      sudo bash deploy-hestia.sh {user} {domain}
+                    </p>
+                    <p className="bg-white dark:bg-slate-900 p-2 rounded border border-slate-200 dark:border-slate-800 select-all text-slate-600 dark:text-slate-400">
+                      # الخيار B: التسجيل في متجر هيستيا للتثبيت بالنقرة الواحدة (Quick Install App):
+                    </p>
+                    <p className="bg-white dark:bg-slate-900 p-2 rounded border border-slate-200 dark:border-slate-800 select-all font-bold text-slate-800 dark:text-slate-100">
+                      sudo bash register-hestia-dvhelp.sh
+                    </p>
+                    <p className="bg-white dark:bg-slate-900 p-2 rounded border border-slate-200 dark:border-slate-800 select-all text-emerald-600 dark:text-emerald-400">
+                      # ميزة البنية: Nginx بهيستيا يدير SSL/Let's Encrypt ويوجه إلى Next.js (:3000) و FastAPI (:8000) بدون أي تعارض مع Caddy
+                    </p>
+                  </>
+                ) : mode === 'hestia_quick_app' ? (
                   <>
                     <p className="bg-white dark:bg-slate-900 p-2 rounded border border-slate-200 dark:border-slate-800 select-all text-amber-600 dark:text-amber-400 font-semibold">
                       # 1. شغّل سكريبت تسجيل Quick Install كمسؤول root على سيرفر هيستيا:
