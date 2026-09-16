@@ -76,8 +76,20 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 
 const COLLECTION_NAME = 'applicants';
 
+/* --------------------------------------------------------------------------
+ * LEGACY DIRECT-WRITE HELPERS — SUPERSED
+ *
+ * These write straight to the un-scoped `applicants` collection and predate
+ * the workspace model. The application no longer calls them: all writes now
+ * flow through `applicantRepository` → `syncQueue` → `firebaseTransport`,
+ * which enforce tenant isolation. They are retained (not exported by any UI)
+ * only so external diagnostics scripts keep type-checking. Do NOT wire them
+ * back into the app — they bypass the permission gate entirely.
+ * ------------------------------------------------------------------------ */
+
 /**
- * Save or update an applicant document in Cloud Firestore
+ * @deprecated Use `applicantRepository.saveApplicant` instead. Bypasses tenant
+ * isolation and the offline sync queue.
  */
 export async function saveApplicantCloud(applicant: Applicant): Promise<void> {
   const path = `${COLLECTION_NAME}/${applicant.id}`;
@@ -134,7 +146,8 @@ export async function getApplicantCloud(id: string): Promise<Applicant | null> {
 }
 
 /**
- * Delete an applicant from Cloud Firestore
+ * @deprecated Use `applicantRepository.removeApplicant` instead. Bypasses
+ * tenant isolation and the offline sync queue.
  */
 export async function deleteApplicantCloud(id: string): Promise<void> {
   const path = `${COLLECTION_NAME}/${id}`;

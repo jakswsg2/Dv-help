@@ -2,16 +2,51 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Small-phone breakpoint. Tailwind's default `sm` is 640px, which is too wide
+   to distinguish a 360px phone from a 414px one. `xs` (400px) lets the header
+   keep labels on larger phones while dropping them on the smallest ones. */
+@theme {
+  --breakpoint-xs: 400px;
+}
+
 @layer base {
   html {
     font-family: 'Cairo', 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
     scroll-behavior: smooth;
   }
 
+  /* Prevent accidental horizontal scrolling / layout blow-out on small screens.
+     Individual wide elements are given their own scroll containers instead. */
+  html,
+  body {
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  /* Media and embedded frames never exceed their container */
+  img,
+  video,
+  canvas,
+  svg,
+  iframe {
+    max-width: 100%;
+  }
+
   html.dark,
   html.dark body {
     background-color: #090d16;
     color: #f1f5f9;
+  }
+}
+
+@layer utilities {
+  /* Hide scrollbar while keeping scroll behaviour (used on mobile tab strips) */
+  .scrollbar-none {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
   }
 }
 

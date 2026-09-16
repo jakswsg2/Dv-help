@@ -1,29 +1,76 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Default-deny catch-all
+    // Default-deny catch-all.
     match /{document=**} {
       allow read, write: if false;
     }
 
-    match /applicants/{applicantId} {
-      function isValidId(id) {
-        return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    // ------------------------------------------------------------------
+    // Workspace-scoped applicant store (offline sync target).
+    //
+    // Document ids are composed as "<workspaceId>__<applicantId>" so a
+    // tenant's records are addressable as a group. Every read and write is
+    // bound to the caller's workspace claim, which is what guarantees that
+    // staff on the same permission level never see each other's records.
+    //
+    // Requires a custom auth claim `workspaceId` set at sign-in. Until a
+    // backend issues that claim, these rules deny all access rather than
+    // silently allowing cross-tenant reads (fail closed, never fail open).
+    // ------------------------------------------------------------------
+    match /workspace_applicants/{recordId} {
+      function callerWorkspace() {
+        return request.auth != null && request.auth.token.workspaceId is string
+          ? request.auth.token.workspaceId
+          : '';
       }
 
-      function isValidApplicant(data) {
-        return data is map &&
-          (!('id' in data) || (data.id is string && data.id.size() <= 128)) &&
-          (!('firstName' in data) || (data.firstName is string && data.firstName.size() <= 150)) &&
-          (!('lastName' in data) || (data.lastName is string && data.lastName.size() <= 150)) &&
-          (!('email' in data) || (data.email is string && data.email.size() <= 200));
+      function isAdmin() {
+        return request.auth != null && request.auth.token.role == 'ADMIN';
       }
 
-      allow get: if isValidId(applicantId);
-      allow list: if true;
-      allow create: if isValidId(applicantId) && isValidApplicant(request.resource.data);
-      allow update: if isValidId(applicantId) && isValidApplicant(request.resource.data);
-      allow delete: if isValidId(applicantId);
+      function isValidRecordId(id) {
+        return id is string && id.size() > 0 && id.size() <= 256
+          && id.matches('^[a-zA-Z0-9_\\-]+$');
+      }
+
+      function recordWorkspace() {
+        return request.resource.data.workspaceId is string
+          ? request.resource.data.workspaceId
+          : '';
+      }
+
+      // Tenant-safe envelope check on the stored payload.
+      function isValidPayload() {
+        return request.resource.data is map
+          && request.resource.data.workspaceId is string
+          && request.resource.data.workspaceId.size() > 0
+          && request.resource.data.workspaceId.size() <= 128
+          && request.resource.data.rev is number
+          && request.resource.data is map;
+      }
+
+      allow get: if isValidRecordId(recordId)
+        && request.auth != null
+        && (isAdmin() || resource.data.workspaceId == callerWorkspace());
+
+      allow list: if request.auth != null && isAdmin();
+
+      allow create: if isValidRecordId(recordId)
+        && request.auth != null
+        && isValidPayload()
+        && (isAdmin() || recordWorkspace() == callerWorkspace());
+
+      allow update: if isValidRecordId(recordId)
+        && request.auth != null
+        && isValidPayload()
+        && (isAdmin()
+            || (resource.data.workspaceId == callerWorkspace()
+                && recordWorkspace() == callerWorkspace()));
+
+      allow delete: if isValidRecordId(recordId)
+        && request.auth != null
+        && (isAdmin() || resource.data.workspaceId == callerWorkspace());
     }
   }
 }

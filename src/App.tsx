@@ -4,11 +4,24 @@ import { Applicant, AppStep, Language } from './types';
 import { translations } from './translations';
 import {
   getStoredApplicants,
-  saveStoredApplicants,
-  getActiveApplicantId,
   saveActiveApplicantId,
   createNewApplicant,
 } from './utils/storage';
+import { useAuth } from './context/AuthContext';
+import { AuthGate } from './components/AuthGate';
+import { RolesPermissionsPanel } from './components/RolesPermissionsPanel';
+import { WhatsAppSettingsPanel } from './components/WhatsAppSettingsPanel';
+import { NotificationToasts } from './components/NotificationToasts';
+import { useStatusNotifications } from './hooks/useStatusNotifications';
+import { loadWhatsAppConfig } from './utils/whatsappStore';
+import { DEFAULT_WHATSAPP_CONFIG } from './utils/whatsappProvider';
+import { useOfflineSync } from './hooks/useOfflineSync';
+import {
+  listApplicants,
+  saveApplicant,
+  removeApplicant,
+  migrateLegacyApplicants,
+} from './utils/applicantRepository';
 import { Navbar } from './components/Navbar';
 import { DisclaimerBanner } from './components/DisclaimerBanner';
 import { StepPersonalDetails } from './components/StepPersonalDetails';
@@ -31,7 +44,6 @@ import {
   SHORTCUTS_CHANGED_EVENT,
   CustomShortcutsConfig,
 } from './utils/shortcutManager';
-import { saveApplicantCloud, deleteApplicantCloud } from './utils/firebase';
 import { NetworkStatusBanner } from './components/NetworkStatusBanner';
 import {
   User,
@@ -52,18 +64,49 @@ import {
 } from 'lucide-react';
 import { calculateApplicantProgress } from './utils/applicantProgress';
 
-export const App: React.FC = () => {
+const AuthenticatedApp: React.FC<{ language: Language; onLanguageChange: (l: Language) => void }> = ({
+  language,
+  onLanguageChange,
+}) => {
   const { theme, toggleTheme } = useTheme();
   const { isOnline, wasOffline } = useNetworkStatus();
-  const [language, setLanguage] = useState<Language>('ar');
-  const [activeView, setActiveView] = useState<'WIZARD' | 'BUREAU'>('WIZARD');
+  const { account, isGuest, can, workspaceId, signOut } = useAuth();
+
+  // ---------------------------------------------------------------------
+  // View-level capability gates.
+  //
+  // A guest is here ONLY to fill, inspect and edit their own draft, so they
+  // are confined to the wizard. The applicant dashboard (a staff tool that
+  // lists other people's files) and the WhatsApp messaging centre are both
+  // management features and are hidden from guests entirely.
+  // ---------------------------------------------------------------------
+  const canViewBureau =
+    !isGuest && can('applicant:read_own_workspace');
+  const canViewWhatsApp =
+    !isGuest && (can('applicant:read_own_workspace') || can('workspace:manage_members'));
+  const canViewRoles = can('workspace:manage_members') || can('platform:manage_all_users');
+
+  const [activeView, setActiveView] = useState<'WIZARD' | 'BUREAU' | 'ROLES' | 'WHATSAPP'>('WIZARD');
+
+  // Fail closed: if the current session is not permitted to see the active
+  // view, fall back to the wizard. This catches both a stale view carried
+  // over from a previous session and any future code path that forgets to
+  // check the gate before setting the view.
+  useEffect(() => {
+    const allowed: Record<typeof activeView, boolean> = {
+      WIZARD: true,
+      BUREAU: canViewBureau,
+      WHATSAPP: canViewWhatsApp,
+      ROLES: canViewRoles,
+    };
+    if (!allowed[activeView]) setActiveView('WIZARD');
+  }, [activeView, canViewBureau, canViewWhatsApp, canViewRoles]);
   const [currentStep, setCurrentStep] = useState<AppStep>('PERSONAL');
-  const [applicants, setApplicants] = useState<Applicant[]>(() =>
-    getStoredApplicants()
-  );
-  const [activeApplicantId, setActiveApplicantId] = useState<string>(() =>
-    getActiveApplicantId()
-  );
+  const [applicants, setApplicants] = useState<Applicant[]>([]);
+  const [activeApplicantId, setActiveApplicantId] = useState<string>('');
+  const [, setDataLoading] = useState(true);
+  const [waAutoNotify, setWaAutoNotify] = useState(false);
+  const [notifyApplicantId, setNotifyApplicantId] = useState<string | null>(null);
   const [autoSyncEnabled, setAutoSyncEnabled] = useState<boolean>(() => {
     return localStorage.getItem('dv_autosync_enabled') !== 'false';
   });
@@ -75,6 +118,52 @@ export const App: React.FC = () => {
       return next;
     });
   };
+
+  // Offline-first sync: drains the local queue whenever a connection exists.
+  const offlineSync = useOfflineSync(workspaceId, isOnline, autoSyncEnabled);
+
+  // Load whether this workspace opted into automatic status notifications.
+  useEffect(() => {
+    let cancelled = false;
+    loadWhatsAppConfig(workspaceId || 'local')
+      .then((cfg) => {
+        if (!cancelled) setWaAutoNotify(cfg.autoNotifyOnStatusChange);
+      })
+      .catch(() => {
+        if (!cancelled) setWaAutoNotify(DEFAULT_WHATSAPP_CONFIG.autoNotifyOnStatusChange);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId]);
+
+  // Detect applicant status transitions and queue notifications for them.
+  const statusNotifications = useStatusNotifications(applicants, waAutoNotify);
+
+  // Load workspace-scoped applicants from the local database on mount and
+  // whenever the session's workspace changes. Also migrates any legacy
+  // localStorage records exactly once so no prior work is lost.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setDataLoading(true);
+      try {
+        const legacy = getStoredApplicants();
+        await migrateLegacyApplicants(workspaceId, legacy);
+        const list = await listApplicants(workspaceId);
+        if (cancelled) return;
+        setApplicants(list);
+        setActiveApplicantId((prev) => prev || list[0]?.id || '');
+      } catch (err) {
+        console.error('Failed to load applicants from local database:', err);
+      } finally {
+        if (!cancelled) setDataLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId]);
   const [saveToast, setSaveToast] = useState(false);
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
   const [shortcutFeedback, setShortcutFeedback] = useState<{
@@ -161,64 +250,37 @@ export const App: React.FC = () => {
     saveNow,
   } = useAutoSaveApplicant(activeApplicant, {
     debounceMs: 500,
-    enabled: isOnline && autoSyncEnabled,
+    // Auto-save always runs locally; whether it reaches the remote store is
+    // decided by the sync queue, not by connectivity here.
+    enabled: true,
     onSave: (appToSave) => {
       setApplicants((currentList) => {
-        const updatedList = currentList.map((a) =>
-          a.id === appToSave.id
-            ? { ...appToSave, hasPendingSync: false, lastSyncedAt: new Date().toISOString() }
-            : a
-        );
-        saveStoredApplicants(updatedList);
-        saveActiveApplicantId(appToSave.id);
+        const exists = currentList.some((a) => a.id === appToSave.id);
+        const updatedList = exists
+          ? currentList.map((a) => (a.id === appToSave.id ? appToSave : a))
+          : [appToSave, ...currentList];
         return updatedList;
       });
+      saveActiveApplicantId(appToSave.id);
 
-      // Background cloud sync to Firestore
-      if (isOnline) {
-        saveApplicantCloud(appToSave).catch((err) => {
-          console.warn('Background cloud sync warning:', err);
-        });
-      }
+      // Persist to the local (offline-first) database and enqueue a remote
+      // sync. Never throws on the network: that is the queue's job.
+      saveApplicant(account, isGuest, workspaceId, appToSave).catch((err) => {
+        console.warn('Local save / enqueue warning:', err);
+      });
     },
   });
 
-  // Automatically sync pending offline changes once connection is restored
+  // Automatically drain the queue when a connection is restored.
   useEffect(() => {
     if (isOnline && wasOffline) {
-      setApplicants((prev) => {
-        const hasAnyPending = prev.some((a) => a.hasPendingSync);
-        if (hasAnyPending) {
-          const synced = prev.map((a) => ({
-            ...a,
-            hasPendingSync: false,
-            lastSyncedAt: new Date().toISOString(),
-          }));
-          saveStoredApplicants(synced);
-          synced.forEach((app) => {
-            saveApplicantCloud(app).catch((err) => console.warn('Sync pending applicant error:', err));
-          });
-          return synced;
-        }
-        return prev;
-      });
+      void offlineSync.syncNow();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOnline, wasOffline]);
 
   const handleSyncAllPending = () => {
-    if (!isOnline) return;
-    setApplicants((prev) => {
-      const synced = prev.map((a) => ({
-        ...a,
-        hasPendingSync: false,
-        lastSyncedAt: new Date().toISOString(),
-      }));
-      saveStoredApplicants(synced);
-      synced.forEach((app) => {
-        saveApplicantCloud(app).catch((err) => console.warn('Sync pending applicant error:', err));
-      });
-      return synced;
-    });
+    void offlineSync.syncNow();
     setSaveToast(true);
     setTimeout(() => setSaveToast(false), 2500);
   };
@@ -247,11 +309,12 @@ export const App: React.FC = () => {
 
   const handleNewApplicant = () => {
     const newApp = createNewApplicant();
-    const updated = [newApp, ...applicants];
-    setApplicants(updated);
+    setApplicants((prev) => [newApp, ...prev]);
     setActiveApplicantId(newApp.id);
-    saveStoredApplicants(updated);
     saveActiveApplicantId(newApp.id);
+    saveApplicant(account, isGuest, workspaceId, newApp).catch((err) => {
+      console.warn('Local create / enqueue warning:', err);
+    });
     setActiveView('WIZARD');
     setCurrentStep('PERSONAL');
   };
@@ -260,16 +323,13 @@ export const App: React.FC = () => {
     if (applicants.length <= 1) return;
     const remaining = applicants.filter((a) => a.id !== id);
     setApplicants(remaining);
-    saveStoredApplicants(remaining);
-    if (activeApplicantId === id) {
+    if (activeApplicantId === id && remaining[0]) {
       setActiveApplicantId(remaining[0].id);
       saveActiveApplicantId(remaining[0].id);
     }
-    if (isOnline) {
-      deleteApplicantCloud(id).catch((err) => {
-        console.warn('Cloud delete error:', err);
-      });
-    }
+    removeApplicant(account, isGuest, workspaceId, id).catch((err) => {
+      console.warn('Delete / enqueue warning:', err);
+    });
   };
 
   const handleSelectApplicant = (id: string, step?: AppStep) => {
@@ -382,6 +442,8 @@ export const App: React.FC = () => {
       }
     },
     onToggleView: () => {
+      // Guests have no dashboard; the shortcut is a no-op for them.
+      if (!canViewBureau) return;
       setActiveView((prev) => {
         const next = prev === 'WIZARD' ? 'BUREAU' : 'WIZARD';
         triggerShortcutFeedback(
@@ -428,7 +490,7 @@ export const App: React.FC = () => {
       {/* Navbar */}
       <Navbar
         language={language}
-        onLanguageChange={setLanguage}
+        onLanguageChange={onLanguageChange}
         activeView={activeView}
         onViewChange={setActiveView}
         applicant={activeApplicant}
@@ -441,14 +503,39 @@ export const App: React.FC = () => {
         onOpenShortcuts={() => setShowShortcutsModal(true)}
         autoSyncEnabled={autoSyncEnabled}
         onToggleAutoSync={handleToggleAutoSync}
+        canViewRoles={canViewRoles}
+        canViewWhatsApp={canViewWhatsApp}
+        canViewBureau={canViewBureau}
+        accountName={account?.displayName}
+        accountRole={account ? t.auth.roles[account.role] : isGuest ? t.auth.roles.GUEST : undefined}
+        onSignOut={signOut}
+        pendingSyncCount={offlineSync.pending}
+        isSyncingNow={offlineSync.isSyncing}
       />
 
       {/* Strict Ethics & Legal Notice Banner */}
       <DisclaimerBanner language={language} />
 
+      {/* Guest mode notice — local-only data, upgrade prompt */}
+      {isGuest && (
+        <div className="bg-blue-50 dark:bg-blue-950/40 border-b border-blue-200 dark:border-blue-900/60 text-blue-900 dark:text-blue-200 text-xs">
+          <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-2 flex items-center gap-2 flex-wrap">
+            <User className="w-4 h-4 shrink-0 text-blue-600 dark:text-blue-400" />
+            <span className="font-bold">{t.auth.guestBannerTitle}</span>
+            <span className="hidden sm:inline text-blue-700/80 dark:text-blue-300/80">
+              {t.auth.guestBannerBody}
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 pb-28">
-        {activeView === 'BUREAU' ? (
+      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6 pb-24 sm:pb-28">
+        {activeView === 'WHATSAPP' && canViewWhatsApp ? (
+          <WhatsAppSettingsPanel language={language} workspaceId={workspaceId} />
+        ) : activeView === 'ROLES' && canViewRoles ? (
+          <RolesPermissionsPanel language={language} />
+        ) : activeView === 'BUREAU' && canViewBureau ? (
           <BureauDashboard
             applicants={applicants}
             activeId={activeApplicant.id}
@@ -457,7 +544,13 @@ export const App: React.FC = () => {
             onDeleteApplicant={handleDeleteApplicant}
             onImportApplicants={(imported) => {
               setApplicants(imported);
-              saveStoredApplicants(imported);
+              // Persist the whole imported batch into the local DB and queue
+              // every record for remote sync.
+              imported.forEach((app) => {
+                saveApplicant(account, isGuest, workspaceId, app).catch((err) => {
+                  console.warn('Import persist warning:', err);
+                });
+              });
               if (imported[0]) {
                 setActiveApplicantId(imported[0].id);
                 saveActiveApplicantId(imported[0].id);
@@ -466,6 +559,19 @@ export const App: React.FC = () => {
             language={language}
             isOnline={isOnline}
             onSyncAllPending={handleSyncAllPending}
+            workspaceId={workspaceId}
+            permissions={{
+              canCreate: can('applicant:create'),
+              canDelete: can('applicant:delete_own_workspace') || isGuest,
+              canImport: can('applicant:create'),
+              canExport: true,
+              canSendWhatsApp: true,
+            }}
+            autoOpenWhatsAppFor={notifyApplicantId}
+            onNotificationHandled={() => setNotifyApplicantId(null)}
+            pendingSyncCount={offlineSync.pending}
+            lastSyncAt={offlineSync.lastSyncAt}
+            isSyncingNow={offlineSync.isSyncing}
           />
         ) : (
           <div className="space-y-6">
@@ -478,8 +584,8 @@ export const App: React.FC = () => {
             />
 
             {/* Step Navigation Tabs Bar with Step-based Estimated Time Indicators */}
-            <div className="bg-white border border-slate-200 rounded-2xl p-2 shadow-xs overflow-x-auto">
-              <nav className="flex items-center gap-1.5 min-w-max">
+            <div className="bg-white border border-slate-200 rounded-2xl p-1.5 sm:p-2 shadow-xs overflow-x-auto scrollbar-none">
+              <nav className="flex items-center gap-1 sm:gap-1.5 min-w-max">
                 {stepList.map((step, idx) => {
                   const isActive = step.key === currentStep;
                   const isPassed = idx < currentStepIndex;
@@ -490,7 +596,7 @@ export const App: React.FC = () => {
                     <button
                       key={step.key}
                       onClick={() => setCurrentStep(step.key)}
-                      className={`flex items-center gap-2 px-3 sm:px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all select-none cursor-pointer ${
+                      className={`flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all select-none cursor-pointer ${
                         isActive
                           ? 'bg-blue-600 text-white shadow-xs'
                           : isStepDone
@@ -524,12 +630,12 @@ export const App: React.FC = () => {
                           idx + 1
                         )}
                       </span>
-                      <span>{step.label}</span>
+                      <span className="hidden sm:inline">{step.label}</span>
 
                       {/* Mini Step-Specific Time Badge */}
                       {stepSummary && (
                         <span
-                          className={`text-[10px] px-1.5 py-0.5 rounded font-mono font-medium transition-colors ${
+                          className={`hidden sm:inline-block text-[10px] px-1.5 py-0.5 rounded font-mono font-medium transition-colors ${
                             isActive
                               ? 'bg-blue-700/80 text-blue-100'
                               : isStepDone
@@ -628,8 +734,8 @@ export const App: React.FC = () => {
 
       {/* Floating Bottom Action Bar for Wizard */}
       {activeView === 'WIZARD' && (
-        <div className="fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur border-t border-slate-200 py-3 z-30 shadow-lg">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between gap-3">
+        <div className="fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur border-t border-slate-200 py-2.5 sm:py-3 z-30 shadow-lg pb-[env(safe-area-inset-bottom)]">
+          <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 flex items-center justify-between gap-2 sm:gap-3">
             <button
               id="bottom-bar-prev-step-btn"
               type="button"
@@ -638,7 +744,7 @@ export const App: React.FC = () => {
               title={`${language === 'ar' ? 'السابق' : 'Previous'} (${
                 language === 'ar' ? 'Ctrl+→' : 'Ctrl+←'
               })`}
-              className="flex items-center gap-1.5 px-3 sm:px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs sm:text-sm font-semibold disabled:opacity-40 disabled:pointer-events-none transition-colors cursor-pointer"
+              className="flex items-center gap-1.5 px-3 sm:px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs sm:text-sm font-semibold disabled:opacity-40 disabled:pointer-events-none transition-colors cursor-pointer shrink-0"
             >
               {language === 'ar' ? (
                 <>
@@ -660,7 +766,7 @@ export const App: React.FC = () => {
             </button>
 
             {/* Center: Estimated Time Indicator & Power User Shortcuts Guide Trigger */}
-            <div className="flex items-center gap-3">
+            <div className="hidden md:flex items-center gap-3 min-w-0">
               <div
                 id="bottom-bar-time-indicator"
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 shadow-2xs"
@@ -698,7 +804,7 @@ export const App: React.FC = () => {
                 type="button"
                 onClick={handleManualSave}
                 title={`${t.saveChanges} (${formatKeyBinding(shortcutsConfig.save, language)})`}
-                className={`hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer shrink-0 ${
                   saveStatus === 'saved'
                     ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                     : saveStatus === 'saving'
@@ -713,14 +819,14 @@ export const App: React.FC = () => {
                 ) : (
                   <Save className="w-4 h-4" />
                 )}
-                <span>
+                <span className="hidden sm:inline">
                   {saveStatus === 'saving'
                     ? t.autoSaving
                     : saveStatus === 'saved'
                     ? t.autoSaved
                     : t.saveChanges}
                 </span>
-                <kbd className="px-1.5 py-0.5 text-[10px] font-mono font-bold bg-white text-slate-600 rounded border border-slate-300 shadow-xs">
+                <kbd className="hidden sm:inline-block px-1.5 py-0.5 text-[10px] font-mono font-bold bg-white text-slate-600 rounded border-slate-300 shadow-xs">
                   {formatKeyBinding(shortcutsConfig.save, language)}
                 </kbd>
               </button>
@@ -734,7 +840,7 @@ export const App: React.FC = () => {
                   shortcutsConfig.nextStep,
                   language
                 )})`}
-                className="flex items-center gap-1.5 px-4 sm:px-5 py-2 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-xl text-xs sm:text-sm font-bold shadow-xs transition-colors disabled:opacity-40 disabled:pointer-events-none cursor-pointer"
+                className="flex items-center gap-1.5 px-4 sm:px-5 py-2 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-xl text-xs sm:text-sm font-bold shadow-xs transition-colors disabled:opacity-40 disabled:pointer-events-none cursor-pointer shrink-0"
               >
                 {language === 'ar' ? (
                   <>
@@ -757,6 +863,20 @@ export const App: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Pending status-change notifications (WhatsApp) — staff only */}
+      {canViewWhatsApp && (
+      <NotificationToasts
+        language={language}
+        pending={statusNotifications.pending}
+        onDismiss={statusNotifications.dismiss}
+        onSend={(n) => {
+          setNotifyApplicantId(n.applicantId);
+          statusNotifications.dismiss(n.applicantId);
+          setActiveView('BUREAU');
+        }}
+      />
       )}
 
       {/* Save Feedback Toast */}
@@ -797,6 +917,39 @@ export const App: React.FC = () => {
       )}
     </div>
   );
+};
+
+/**
+ * App shell: owns the language preference and decides which surface to render
+ * based on the session state.
+ *
+ * - `loading`    → a minimal splash while the persisted session is restored.
+ * - `signed_out` → the AuthGate (sign in / sign up / continue as guest).
+ * - `guest` or `signed_in` → the full application, scoped to the session.
+ */
+export const App: React.FC = () => {
+  const { status } = useAuth();
+  const [language, setLanguage] = useState<Language>('ar');
+
+  // Keep document direction in sync with the chosen language.
+  useEffect(() => {
+    document.documentElement.dir = language === 'ar' ? 'rtl' : 'ltr';
+    document.documentElement.lang = language;
+  }, [language]);
+
+  if (status === 'loading') {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
+        <div className="w-8 h-8 rounded-full border-2 border-blue-600 border-t-transparent animate-spin" />
+      </div>
+    );
+  }
+
+  if (status === 'signed_out') {
+    return <AuthGate language={language} onLanguageChange={setLanguage} />;
+  }
+
+  return <AuthenticatedApp language={language} onLanguageChange={setLanguage} />;
 };
 
 export default App;

@@ -22,8 +22,12 @@ import {
   UserCheck,
 } from 'lucide-react';
 import { calculateApplicantProgress } from './BureauStats';
+import { calculateApplicantProgress as calculateDetailedProgress } from '../utils/applicantProgress';
 import { DataIntegrityDashboard } from './DataIntegrityDashboard';
 import { DeleteConfirmationModal } from './DeleteConfirmationModal';
+import { WhatsAppSendButton } from './WhatsAppSendButton';
+import { DEFAULT_WHATSAPP_CONFIG } from '../utils/whatsappProvider';
+import { DEFAULT_TEMPLATES } from '../utils/whatsappTemplates';
 
 interface BureauDashboardProps {
   applicants: Applicant[];
@@ -35,6 +39,37 @@ interface BureauDashboardProps {
   language: Language;
   isOnline?: boolean;
   onSyncAllPending?: () => void;
+  /**
+   * Capability gate. The parent resolves the current session's permissions so
+   * the dashboard can hide/disable actions the user may not perform. Defaults
+   * to all-allowed for backwards compatibility with guest/local usage.
+   */
+  permissions?: {
+    canCreate: boolean;
+    canDelete: boolean;
+    canImport: boolean;
+    canExport: boolean;
+    canSendWhatsApp: boolean;
+  };
+  /** Workspace id, forwarded to the WhatsApp composer for scoped config. */
+  workspaceId?: string;
+  /**
+   * When set, the dashboard should auto-open the WhatsApp composer for this
+   * applicant on mount (used by status-change notifications). The parent
+   * clears it via onNotificationHandled afterwards.
+   */
+  autoOpenWhatsAppFor?: string | null;
+  onNotificationHandled?: () => void;
+  /**
+   * Authoritative count of mutations still waiting in the offline sync queue.
+   * Overrides the legacy per-applicant `hasPendingSync` heuristic now that
+   * persistence is owned by the local database + queue.
+   */
+  pendingSyncCount?: number;
+  /** ISO timestamp of the last successful remote sync. */
+  lastSyncAt?: string;
+  /** True while a sync run is in flight. */
+  isSyncingNow?: boolean;
 }
 
 export const BureauDashboard: React.FC<BureauDashboardProps> = ({
@@ -47,6 +82,19 @@ export const BureauDashboard: React.FC<BureauDashboardProps> = ({
   language,
   isOnline = true,
   onSyncAllPending,
+  permissions = {
+    canCreate: true,
+    canDelete: true,
+    canImport: true,
+    canExport: true,
+    canSendWhatsApp: true,
+  },
+  workspaceId = '',
+  autoOpenWhatsAppFor = null,
+  onNotificationHandled,
+  pendingSyncCount: pendingSyncCountProp,
+  lastSyncAt,
+  isSyncingNow = false,
 }) => {
   const t = translations[language];
   const [searchQuery, setSearchQuery] = useState('');
@@ -56,6 +104,21 @@ export const BureauDashboard: React.FC<BureauDashboardProps> = ({
   const [applicantToDelete, setApplicantToDelete] = useState<Applicant | null>(null);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // When a status-change notification asks us to surface WhatsApp for a given
+  // applicant, switch to the registry table (where the send button lives) and
+  // scroll the matching row into view.
+  useEffect(() => {
+    if (!autoOpenWhatsAppFor) return;
+    setBureauViewMode('REGISTRY');
+    const timer = setTimeout(() => {
+      const el = document.querySelector(`[data-applicant-row="${autoOpenWhatsAppFor}"]`);
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      onNotificationHandled?.();
+    }, 250);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoOpenWhatsAppFor]);
 
   // Keyboard shortcut: Press '/' or 'Ctrl+K' / 'Cmd+K' to focus the search bar
   useEffect(() => {
@@ -85,7 +148,11 @@ export const BureauDashboard: React.FC<BureauDashboardProps> = ({
   const submittedCount = applicants.filter((a) => a.status === 'SUBMITTED').length;
   const readyCount = applicants.filter((a) => a.status === 'READY_FOR_SUBMISSION').length;
   const draftCount = applicants.filter((a) => a.status === 'DRAFT').length;
-  const pendingSyncCount = applicants.filter((a) => a.hasPendingSync).length;
+  // Prefer the authoritative queue depth when the parent supplies it; fall
+  // back to the legacy per-record flag only if it was not provided.
+  const legacyPendingCount = applicants.filter((a) => a.hasPendingSync).length;
+  const pendingSyncCount =
+    typeof pendingSyncCountProp === 'number' ? pendingSyncCountProp : legacyPendingCount;
 
   // Filter with comprehensive name and passport matching
   const filteredWithMatchInfo = useMemo(() => {
@@ -295,7 +362,8 @@ export const BureauDashboard: React.FC<BureauDashboardProps> = ({
           <button
             type="button"
             onClick={onNewApplicant}
-            className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-xs transition-colors cursor-pointer"
+            disabled={!permissions.canCreate}
+            className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-xs transition-colors cursor-pointer disabled:opacity-40 disabled:pointer-events-none"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>{t.newApplicant}</span>
@@ -447,6 +515,29 @@ export const BureauDashboard: React.FC<BureauDashboardProps> = ({
 
               {/* Actions */}
               <div className="flex flex-wrap items-center gap-2">
+                {/* Sync status: last sync time + live syncing indicator */}
+                <div
+                  className={`flex items-center gap-1.5 px-2.5 py-2 rounded-xl border text-[11px] font-semibold ${
+                    isSyncingNow
+                      ? 'bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-950/40 dark:border-blue-900/60 dark:text-blue-300'
+                      : pendingSyncCount > 0
+                      ? 'bg-amber-50 border-amber-200 text-amber-700 dark:bg-amber-950/40 dark:border-amber-900/60 dark:text-amber-300'
+                      : 'bg-emerald-50 border-emerald-200 text-emerald-700 dark:bg-emerald-950/40 dark:border-emerald-900/60 dark:text-emerald-300'
+                  }`}
+                  title={t.auth.lastSync}
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isSyncingNow ? 'animate-spin' : ''}`} />
+                  <span>
+                    {isSyncingNow
+                      ? t.auth.syncing
+                      : pendingSyncCount > 0
+                      ? `${pendingSyncCount} ${t.auth.pendingOps}`
+                      : lastSyncAt
+                      ? `${t.auth.lastSync}: ${new Date(lastSyncAt).toLocaleTimeString()}`
+                      : t.auth.neverSynced}
+                  </span>
+                </div>
+
                 {/* Sync All Pending Changes Button */}
                 {pendingSyncCount > 0 && onSyncAllPending && (
                   <button
@@ -488,6 +579,7 @@ export const BureauDashboard: React.FC<BureauDashboardProps> = ({
                 <button
                   type="button"
                   onClick={handleExportAll}
+                  disabled={!permissions.canExport}
                   className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-300 cursor-pointer"
                 >
                   <Download className="w-3.5 h-3.5" />
@@ -497,7 +589,8 @@ export const BureauDashboard: React.FC<BureauDashboardProps> = ({
                 <button
                   type="button"
                   onClick={onNewApplicant}
-                  className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors cursor-pointer"
+                  disabled={!permissions.canCreate}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors cursor-pointer disabled:opacity-40 disabled:pointer-events-none"
                 >
                   <Plus className="w-4 h-4" />
                   <span>{t.newApplicant}</span>
@@ -621,6 +714,7 @@ export const BureauDashboard: React.FC<BureauDashboardProps> = ({
                     return (
                       <tr
                         key={app.id}
+                        data-applicant-row={app.id}
                         className={`hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors ${
                           isActive ? 'bg-blue-50/40 dark:bg-blue-950/20' : ''
                         } ${
@@ -786,6 +880,26 @@ export const BureauDashboard: React.FC<BureauDashboardProps> = ({
 
                         <td className="py-3 px-4 text-center">
                           <div className="flex items-center justify-center gap-1.5">
+                            {permissions.canSendWhatsApp && (
+                            <WhatsAppSendButton
+                              applicant={app}
+                              language={language}
+                              workspaceId={workspaceId}
+                              bureauName={t.appTitle}
+                              config={DEFAULT_WHATSAPP_CONFIG}
+                              templates={DEFAULT_TEMPLATES}
+                              missingCount={
+                                calculateDetailedProgress(app).totalFields -
+                                calculateDetailedProgress(app).completedFields
+                              }
+                              completionPercent={calculateDetailedProgress(app).percentage}
+                              defaultEvent={
+                                calculateDetailedProgress(app).percentage >= 100
+                                  ? 'READY_FOR_SUBMISSION'
+                                  : 'MISSING_DOCUMENTS'
+                              }
+                            />
+                            )}
                             <button
                               type="button"
                               onClick={() => onSelectApplicant(app.id)}
@@ -797,6 +911,7 @@ export const BureauDashboard: React.FC<BureauDashboardProps> = ({
                               <button
                                 type="button"
                                 onClick={() => setApplicantToDelete(app)}
+                                disabled={!permissions.canDelete}
                                 className="p-1 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition-colors cursor-pointer"
                                 title={language === 'ar' ? 'حذف الملف' : 'Delete profile'}
                                 aria-label={language === 'ar' ? `حذف ملف ${fullName}` : `Delete entrant profile ${fullName}`}
