@@ -107,15 +107,13 @@ export function getStoredApplicants(): Applicant[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) {
-      const initial = [INITIAL_APPLICANT];
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(initial));
-      return initial;
+      return [];
     }
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : [INITIAL_APPLICANT];
+    return Array.isArray(parsed) ? parsed : [];
   } catch (err) {
     console.error('Failed to load stored applicants:', err);
-    return [INITIAL_APPLICANT];
+    return [];
   }
 }
 
@@ -127,11 +125,11 @@ export function saveStoredApplicants(applicants: Applicant[]): void {
   }
 }
 
-export function getActiveApplicantId(): string {
+export function getActiveApplicantId(): string | null {
   try {
-    return localStorage.getItem(ACTIVE_ID_KEY) || INITIAL_APPLICANT.id;
+    return localStorage.getItem(ACTIVE_ID_KEY);
   } catch {
-    return INITIAL_APPLICANT.id;
+    return null;
   }
 }
 

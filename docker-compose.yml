@@ -1,15 +1,19 @@
-# ==============================================================================
-# DV-Prep — Docker Compose (Local / Development)
-# ==============================================================================
-# The application is a self-contained Vite + React SPA that talks directly to
-# Firebase (Firestore / Auth) from the browser. Therefore the stack is a single
-# service: a static build served by Nginx inside the container.
-#
-#   docker compose up --build
-#   → http://localhost:8080
-# ==============================================================================
+version: '3.8'
 
 services:
+  db:
+    image: postgres:15-alpine
+    container_name: dv_help_db
+    restart: always
+    environment:
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-password}
+      POSTGRES_DB: ${DB_NAME:-dv_help}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
   app:
     build:
       context: .
@@ -19,9 +23,14 @@ services:
     restart: unless-stopped
     ports:
       - "${APP_PORT:-8080}:80"
+    depends_on:
+      - db
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost/healthz"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 5s
+
+volumes:
+  postgres_data:

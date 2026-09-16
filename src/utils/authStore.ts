@@ -166,6 +166,17 @@ export async function signUp(input: SignUpInput): Promise<AuthResult> {
     workspaceId = input.inviteWorkspaceId;
     role = 'STAFF';
   } else {
+    // Check if any accounts already exist in the system to determine the role
+    const allAccounts = await listAllAccounts();
+    if (allAccounts.length === 0) {
+      // The very first user to register in the application becomes the global ADMIN
+      role = 'ADMIN';
+    } else {
+      // All subsequent users are regular users by default
+      // Use 'STAFF' since 'USER' is not defined in UserRole type
+      role = 'STAFF';
+    }
+
     const workspace: Workspace = {
       id: newId('ws'),
       name: input.workspaceName?.trim() || `${input.displayName.trim()} Workspace`,
@@ -174,7 +185,6 @@ export async function signUp(input: SignUpInput): Promise<AuthResult> {
       ownerId: '', // patched below once the account id exists
     };
     workspaceId = workspace.id;
-    role = 'ADMIN';
     await putWorkspace(workspace);
     await setMeta(`ws_owner_${workspace.id}`, workspace);
   }
