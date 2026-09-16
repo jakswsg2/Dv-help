@@ -15,6 +15,7 @@ import {
   Package,
   Cpu,
   Zap,
+  Database,
 } from 'lucide-react';
 import {
   HestiaConfigOptions,
@@ -35,6 +36,13 @@ import {
   generateHestiaDvHelpQuickAppRegisterBash,
   generateDeployHestiaBash,
 } from '../utils/hestiaConfigGenerator';
+import {
+  generateHestiaDbConnectionStrings,
+  generateHestiaPostgresSchema,
+  exportApplicantsToSqlInserts,
+  replaceDockerEnvWithHestiaLocal,
+  HestiaDbConfig,
+} from '../utils/hestiaDbConnector';
 
 interface HestiaConfigModalProps {
   isOpen: boolean;
@@ -55,7 +63,11 @@ export const HestiaConfigModal: React.FC<HestiaConfigModalProps> = ({
   const [domain, setDomain] = useState('dv.example.com');
   const [user, setUser] = useState('admin');
   const [ip, setIp] = useState('129.151.138.90');
+  const [dbNameShort, setDbNameShort] = useState('dvhelp');
+  const [dbUserShort, setDbUserShort] = useState('dvhelp');
+  const [dbPassword, setDbPassword] = useState('dvhelp_secure_pass_2026');
   const [mode, setMode] = useState<
+    | 'hestia_native_db'
     | 'hestia_docker_app'
     | 'hestia_quick_app'
     | 'hestia_template_tpl'
@@ -65,7 +77,10 @@ export const HestiaConfigModal: React.FC<HestiaConfigModalProps> = ({
     | 'proxy_docker'
     | 'apache_spa'
     | 'json_package'
-  >('hestia_docker_app');
+  >('hestia_native_db');
+  const [dbSubtype, setDbSubtype] = useState<
+    'connection_strings' | 'schema_sql' | 'inserts_sql' | 'env_converter'
+  >('connection_strings');
   const [dockerSubtype, setDockerSubtype] = useState<
     'deploy_script' | 'register_script' | 'compose' | 'php_class' | 'nginx_stpl' | 'nginx_tpl'
   >('deploy_script');
@@ -93,12 +108,90 @@ export const HestiaConfigModal: React.FC<HestiaConfigModalProps> = ({
     exportApplicantsData,
   };
 
+  const currentDbConfig: HestiaDbConfig = {
+    host: '127.0.0.1',
+    port: 5432,
+    hestiaUser: user.trim() || 'admin',
+    dbNameShort: dbNameShort.trim() || 'dvhelp',
+    dbUserShort: dbUserShort.trim() || 'dvhelp',
+    password: dbPassword.trim(),
+    sslMode: 'prefer',
+    dbEngine: 'pgsql',
+  };
+
   // Generate preview content based on selected mode
   let generatedContent = '';
   let filename = '';
   let mimeType = 'text/plain';
 
-  if (mode === 'hestia_docker_app') {
+  if (mode === 'hestia_native_db') {
+    const conn = generateHestiaDbConnectionStrings(currentDbConfig);
+    if (dbSubtype === 'connection_strings') {
+      filename = 'hestia_postgresql_connections.txt';
+      mimeType = 'text/plain';
+      generatedContent = `# ==============================================================================
+# HestiaCP Native PostgreSQL Local Connection Strings & Direct Access
+# Server: ${ip} | User: ${currentDbConfig.hestiaUser} | Host: 127.0.0.1:5432
+# (Replaces Docker container hostnames with standard local connection URIs)
+# ==============================================================================
+
+# 1. Standard libpq / DSN Connection URI:
+${conn.standardUri}
+
+# 2. Async SQLAlchemy (FastAPI / asyncpg):
+DATABASE_URL=${conn.asyncSqlAlchemy}
+
+# 3. Sync SQLAlchemy / Psycopg2 (Celery / Migrations):
+DATABASE_SYNC_URL=${conn.syncSqlAlchemy}
+
+# 4. HestiaCP CLI Command to create this database & user (Run as root):
+${conn.hestiaCliCreateCommand}
+
+# 5. Direct psql CLI Terminal Command (Local / SSH):
+${conn.psqlCliCommand}
+
+# 6. Node.js (pg / Drizzle / Prisma / TypeORM) JSON Config:
+${JSON.stringify(conn.nodePgConfig, null, 2)}
+
+# 7. Web Management:
+# Access phpPgAdmin in your Hestia Control Panel:
+# URL: https://${ip}:8083/phppgadmin/
+# Username: ${conn.fullDbUser}
+# Database: ${conn.fullDbName}
+`;
+    } else if (dbSubtype === 'schema_sql') {
+      generatedContent = generateHestiaPostgresSchema(currentDbConfig);
+      filename = 'hestia_schema.sql';
+      mimeType = 'application/sql';
+    } else if (dbSubtype === 'inserts_sql') {
+      generatedContent = exportApplicantsToSqlInserts(applicants, currentDbConfig);
+      filename = `applicants_export_${domain.replace(/[^a-zA-Z0-9_-]/g, '_')}.sql`;
+      mimeType = 'application/sql';
+    } else {
+      // env_converter
+      const sampleDockerEnv = `POSTGRES_HOST=postgres\nPOSTGRES_PORT=5432\nPOSTGRES_DB=dvprep_db\nPOSTGRES_USER=dvprep_user\nPOSTGRES_PASSWORD=${dbPassword}\nDATABASE_URL=postgresql://dvprep_user:${dbPassword}@postgres:5432/dvprep_db\nREDIS_HOST=redis\nREDIS_URL=redis://redis:6379/0\nS3_ENDPOINT_URL=http://minio:9000`;
+      generatedContent = `# ==============================================================================
+# Converted Production .env for Native HestiaCP (No Docker)
+# Generated for: ${domain} | User: ${user}
+# ==============================================================================
+PROJECT_NAME="DV-Help Bureau Suite"
+APP_ENV=production
+ENV=production
+DEBUG=false
+PRODUCTION_URL=https://${domain}
+DOMAIN=${domain}
+DOMAIN_SLUG=${domain.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase()}
+API_V1_PREFIX=/api/v1
+FRONTEND_PORT=${dockerPort}
+BACKEND_PORT=${backendPort}
+PORT=${dockerPort}
+
+${replaceDockerEnvWithHestiaLocal(sampleDockerEnv, currentDbConfig)}
+`;
+      filename = '.env.hestia';
+      mimeType = 'text/plain';
+    }
+  } else if (mode === 'hestia_docker_app') {
     if (dockerSubtype === 'deploy_script') {
       generatedContent = generateDeployHestiaBash(currentOptions);
       filename = 'deploy-hestia.sh';
@@ -112,16 +205,16 @@ export const HestiaConfigModal: React.FC<HestiaConfigModalProps> = ({
       filename = 'DVHelpSetup.php';
       mimeType = 'application/x-httpd-php';
     } else if (dockerSubtype === 'nginx_stpl') {
-      generatedContent = generateHestiaDockerNginxStpl('dv-help-docker', currentOptions.dockerPort, currentOptions.backendPort);
-      filename = 'dv-help-docker.stpl';
+      generatedContent = generateHestiaDockerNginxStpl('dv-help-native', currentOptions.dockerPort, currentOptions.backendPort);
+      filename = 'dv-help-native.stpl';
       mimeType = 'text/plain';
     } else if (dockerSubtype === 'nginx_tpl') {
-      generatedContent = generateHestiaDockerNginxTpl('dv-help-docker', currentOptions.dockerPort, currentOptions.backendPort);
-      filename = 'dv-help-docker.tpl';
+      generatedContent = generateHestiaDockerNginxTpl('dv-help-native', currentOptions.dockerPort, currentOptions.backendPort);
+      filename = 'dv-help-native.tpl';
       mimeType = 'text/plain';
     } else {
       generatedContent = generateHestiaDvHelpQuickAppRegisterBash(currentOptions);
-      filename = 'register-hestia-dvhelp.sh';
+      filename = 'register-hestia-native.sh';
       mimeType = 'text/x-shellscript';
     }
   } else if (mode === 'hestia_quick_app') {
@@ -319,11 +412,32 @@ export const HestiaConfigModal: React.FC<HestiaConfigModalProps> = ({
             {/* Mode Selector Tabs */}
             <div className="space-y-2">
               <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
-                {isAr ? 'اختر نمط تصدير قوالب لوحة تحكم هيستيا (HestiaCP):' : 'Select HestiaCP Export & Template Mode:'}
+                {isAr ? 'اختر نمط تصدير قوالب وقواعد بيانات هيستيا (HestiaCP):' : 'Select HestiaCP Export & Template Mode:'}
               </label>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-4 gap-2.5">
-                {/* Mode 0: DV-Help Full-Stack Docker Quick App */}
+                {/* Mode 0: HestiaCP Native PostgreSQL Database Connector */}
+                <button
+                  type="button"
+                  onClick={() => setMode('hestia_native_db')}
+                  className={`p-3 rounded-xl border text-left rtl:text-right transition-all cursor-pointer flex flex-col justify-between ${
+                    mode === 'hestia_native_db'
+                      ? 'border-emerald-600 bg-emerald-50/90 dark:bg-emerald-950/60 text-emerald-950 dark:text-emerald-100 shadow-xs ring-2 ring-emerald-500'
+                      : 'border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/40 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 font-bold text-xs">
+                    <Database className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                    <span>{isAr ? 'قاعدة بيانات هيستيا (PostgreSQL محلي)' : 'HestiaCP Native PostgreSQL'}</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1.5 leading-snug">
+                    {isAr
+                      ? 'ربط مباشر بقاعدة بيانات هيستيا المحلية بدون دوكر (v-add-database + DDL + .env محلي)'
+                      : 'Direct local PostgreSQL connection strings, schema DDL & local .env converter (No Docker)'}
+                  </p>
+                </button>
+
+                {/* Mode 1: DV-Help Full-Stack Native App */}
                 <button
                   type="button"
                   onClick={() => setMode('hestia_docker_app')}
@@ -335,16 +449,16 @@ export const HestiaConfigModal: React.FC<HestiaConfigModalProps> = ({
                 >
                   <div className="flex items-center gap-2 font-bold text-xs">
                     <Layers className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-                    <span>{isAr ? 'تطبيق DV-Help كامل (Docker)' : 'DV-Help Full-Stack (Docker)'}</span>
+                    <span>{isAr ? 'نشر التطبيق الكامل (Systemd + Nginx)' : 'DV-Help Full-Stack (Native)'}</span>
                   </div>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1.5 leading-snug">
                     {isAr
-                      ? 'Next.js + FastAPI + Postgres + Redis + MinIO بدون تعارض منافذ Caddy (مع Hestia SSL)'
-                      : 'Next.js + FastAPI + Postgres + Redis + MinIO without Caddy port clash (Hestia SSL)'}
+                      ? 'خدمات Systemd مستقلة + Nginx Reverse Proxy + شهادة Hestia SSL تلقائياً'
+                      : 'Native Systemd services + Nginx Reverse Proxy with Hestia SSL certificate'}
                   </p>
                 </button>
 
-                {/* Mode 1: Hestia Quick Install WebApp */}
+                {/* Mode 2: Hestia Quick Install WebApp */}
                 <button
                   type="button"
                   onClick={() => setMode('hestia_quick_app')}
@@ -363,7 +477,7 @@ export const HestiaConfigModal: React.FC<HestiaConfigModalProps> = ({
                   </p>
                 </button>
 
-                {/* Mode 1: Hestia Native Template (.tpl / .stpl) */}
+                {/* Mode 3: Hestia Native Template (.tpl / .stpl) */}
                 <button
                   type="button"
                   onClick={() => setMode('hestia_template_tpl')}
@@ -382,7 +496,7 @@ export const HestiaConfigModal: React.FC<HestiaConfigModalProps> = ({
                   </p>
                 </button>
 
-                {/* Mode 2: Automated One-Click Bash Script */}
+                {/* Mode 4: Automated One-Click Bash Script */}
                 <button
                   type="button"
                   onClick={() => setMode('hestia_bash_installer')}
@@ -401,7 +515,7 @@ export const HestiaConfigModal: React.FC<HestiaConfigModalProps> = ({
                   </p>
                 </button>
 
-                {/* Mode 3: Hestia Package (.pkg) */}
+                {/* Mode 5: Hestia Package (.pkg) */}
                 <button
                   type="button"
                   onClick={() => setMode('hestia_package_pkg')}
@@ -420,7 +534,7 @@ export const HestiaConfigModal: React.FC<HestiaConfigModalProps> = ({
                   </p>
                 </button>
 
-                {/* Mode 4: Standalone Nginx conf */}
+                {/* Mode 6: Standalone Nginx conf */}
                 <button
                   type="button"
                   onClick={() => setMode('spa_nginx')}
@@ -436,44 +550,6 @@ export const HestiaConfigModal: React.FC<HestiaConfigModalProps> = ({
                   </div>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1.5 leading-snug">
                     {isAr ? 'ملف إعدادات مباشر للمجال في /conf/web/{domain}/' : 'Direct domain vHost file for conf/web/ directory'}
-                  </p>
-                </button>
-
-                {/* Mode 5: Docker Proxy */}
-                <button
-                  type="button"
-                  onClick={() => setMode('proxy_docker')}
-                  className={`p-3 rounded-xl border text-left rtl:text-right transition-all cursor-pointer flex flex-col justify-between ${
-                    mode === 'proxy_docker'
-                      ? 'border-blue-600 bg-blue-50/50 dark:bg-blue-950/40 text-blue-950 dark:text-blue-100 shadow-xs ring-1 ring-blue-500'
-                      : 'border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/40 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'
-                  }`}
-                >
-                  <div className="flex items-center gap-2 font-bold text-xs">
-                    <Layers className="w-4 h-4 text-purple-600" />
-                    <span>Docker Proxy</span>
-                  </div>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1.5 leading-snug">
-                    {isAr ? 'ربط Nginx بحاوية دوكر على المنفذ 3000' : 'ProxyPass traffic to Docker container'}
-                  </p>
-                </button>
-
-                {/* Mode 6: Apache .htaccess */}
-                <button
-                  type="button"
-                  onClick={() => setMode('apache_spa')}
-                  className={`p-3 rounded-xl border text-left rtl:text-right transition-all cursor-pointer flex flex-col justify-between ${
-                    mode === 'apache_spa'
-                      ? 'border-blue-600 bg-blue-50/50 dark:bg-blue-950/40 text-blue-950 dark:text-blue-100 shadow-xs ring-1 ring-blue-500'
-                      : 'border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/40 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'
-                  }`}
-                >
-                  <div className="flex items-center gap-2 font-bold text-xs">
-                    <FileCode className="w-4 h-4 text-amber-600" />
-                    <span>Apache (.htaccess)</span>
-                  </div>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1.5 leading-snug">
-                    {isAr ? 'لقوالب Nginx+Apache في public_html' : 'For Apache .htaccess in public_html'}
                   </p>
                 </button>
 
@@ -500,6 +576,115 @@ export const HestiaConfigModal: React.FC<HestiaConfigModalProps> = ({
 
             {/* Extra Options for Selected Mode */}
             <div className="flex flex-wrap items-center gap-4 p-3 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 rounded-xl text-xs">
+              {mode === 'hestia_native_db' && (
+                <div className="w-full flex flex-col gap-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2 font-medium text-slate-700 dark:text-slate-300">
+                      <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                        {isAr ? 'ملف قاعدة البيانات:' : 'Database Export View:'}
+                      </span>
+                      <div className="inline-flex flex-wrap rounded-lg border border-slate-300 dark:border-slate-700 p-0.5 bg-white dark:bg-slate-900">
+                        <button
+                          type="button"
+                          onClick={() => setDbSubtype('connection_strings')}
+                          className={`px-2.5 py-1 text-xs rounded-md font-mono cursor-pointer ${
+                            dbSubtype === 'connection_strings'
+                              ? 'bg-emerald-600 text-white font-bold'
+                              : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
+                          }`}
+                        >
+                          Connection Strings & CLI
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDbSubtype('schema_sql')}
+                          className={`px-2.5 py-1 text-xs rounded-md font-mono cursor-pointer ${
+                            dbSubtype === 'schema_sql'
+                              ? 'bg-emerald-600 text-white font-bold'
+                              : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
+                          }`}
+                        >
+                          schema.sql (DDL)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDbSubtype('inserts_sql')}
+                          className={`px-2.5 py-1 text-xs rounded-md font-mono cursor-pointer ${
+                            dbSubtype === 'inserts_sql'
+                              ? 'bg-emerald-600 text-white font-bold'
+                              : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
+                          }`}
+                        >
+                          applicants_export.sql ({applicants.length})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDbSubtype('env_converter')}
+                          className={`px-2.5 py-1 text-xs rounded-md font-mono cursor-pointer ${
+                            dbSubtype === 'env_converter'
+                              ? 'bg-emerald-600 text-white font-bold'
+                              : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
+                          }`}
+                        >
+                          .env.hestia (Local Config)
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Database Credentials Input */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-slate-200 dark:border-slate-800 text-[11px]">
+                    <div>
+                      <label className="block text-slate-500 font-semibold mb-1">
+                        {isAr ? 'اسم قاعدة البيانات (اللاحقة):' : 'DB Name Suffix:'}
+                      </label>
+                      <input
+                        type="text"
+                        value={dbNameShort}
+                        onChange={(e) => setDbNameShort(e.target.value)}
+                        placeholder="dvhelp"
+                        className="w-full px-2 py-1 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-xs font-mono"
+                      />
+                      <span className="text-[10px] text-slate-400">
+                        {user}_{dbNameShort}
+                      </span>
+                    </div>
+
+                    <div>
+                      <label className="block text-slate-500 font-semibold mb-1">
+                        {isAr ? 'مستخدم قاعدة البيانات (اللاحقة):' : 'DB User Suffix:'}
+                      </label>
+                      <input
+                        type="text"
+                        value={dbUserShort}
+                        onChange={(e) => setDbUserShort(e.target.value)}
+                        placeholder="dvhelp"
+                        className="w-full px-2 py-1 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-xs font-mono"
+                      />
+                      <span className="text-[10px] text-slate-400">
+                        {user}_{dbUserShort}
+                      </span>
+                    </div>
+
+                    <div>
+                      <label className="block text-slate-500 font-semibold mb-1">
+                        {isAr ? 'كلمة مرور قاعدة البيانات:' : 'DB Password:'}
+                      </label>
+                      <input
+                        type="text"
+                        value={dbPassword}
+                        onChange={(e) => setDbPassword(e.target.value)}
+                        placeholder="secure_password"
+                        className="w-full px-2 py-1 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-xs font-mono"
+                      />
+                      <span className="text-[10px] text-slate-400">
+                        Host: 127.0.0.1:5432
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {mode === 'hestia_docker_app' && (
                 <div className="w-full flex flex-col gap-3">
                   <div className="flex flex-wrap items-center gap-2 font-medium text-slate-700 dark:text-slate-300">
@@ -525,18 +710,7 @@ export const HestiaConfigModal: React.FC<HestiaConfigModalProps> = ({
                             : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
                         }`}
                       >
-                        register-hestia-dvhelp.sh (Register)
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setDockerSubtype('compose')}
-                        className={`px-2.5 py-1 text-xs rounded-md font-mono cursor-pointer ${
-                          dockerSubtype === 'compose'
-                            ? 'bg-indigo-600 text-white font-bold'
-                            : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
-                        }`}
-                      >
-                        docker-compose.hestia.yml (Docker)
+                        register-hestia-native.sh
                       </button>
                       <button
                         type="button"
@@ -547,7 +721,7 @@ export const HestiaConfigModal: React.FC<HestiaConfigModalProps> = ({
                             : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
                         }`}
                       >
-                        DVHelpSetup.php (Hestia App Class)
+                        DVHelpSetup.php
                       </button>
                       <button
                         type="button"
@@ -782,10 +956,28 @@ export const HestiaConfigModal: React.FC<HestiaConfigModalProps> = ({
                 </span>
               </h4>
               <div dir="ltr" className="space-y-1.5 font-mono text-[11px] text-slate-600 dark:text-slate-300">
-                {mode === 'hestia_docker_app' ? (
+                {mode === 'hestia_native_db' ? (
+                  <>
+                    <p className="bg-white dark:bg-slate-900 p-2 rounded border border-slate-200 dark:border-slate-800 select-all text-emerald-600 dark:text-emerald-400 font-semibold">
+                      # 1. إنشاء قاعدة بيانات PostgreSQL والمستخدم في لوحة هيستيا بأمر واحد كمسؤول root:
+                    </p>
+                    <p className="bg-white dark:bg-slate-900 p-2 rounded border border-slate-200 dark:border-slate-800 select-all font-bold text-slate-800 dark:text-slate-100">
+                      v-add-database {user} {dbNameShort} {dbUserShort} '{dbPassword}' pgsql
+                    </p>
+                    <p className="bg-white dark:bg-slate-900 p-2 rounded border border-slate-200 dark:border-slate-800 select-all text-slate-600 dark:text-slate-400">
+                      # 2. استيراد جداول ومخطط DV-Help إلى قاعدة بيانات هيستيا المحلية:
+                    </p>
+                    <p className="bg-white dark:bg-slate-900 p-2 rounded border border-slate-200 dark:border-slate-800 select-all font-bold text-slate-800 dark:text-slate-100">
+                      PGPASSWORD='{dbPassword}' psql -h 127.0.0.1 -U {user}_{dbUserShort} -d {user}_{dbNameShort} -f schema.sql
+                    </p>
+                    <p className="bg-white dark:bg-slate-900 p-2 rounded border border-slate-200 dark:border-slate-800 select-all text-blue-600 dark:text-blue-400">
+                      # 3. حفظ إعدادات الاتصال في ملف .env الخاص بالتطبيق بدون الحاجة إلى Docker.
+                    </p>
+                  </>
+                ) : mode === 'hestia_docker_app' ? (
                   <>
                     <p className="bg-white dark:bg-slate-900 p-2 rounded border border-slate-200 dark:border-slate-800 select-all text-indigo-600 dark:text-indigo-400 font-semibold">
-                      # الخيار A: نشر فوري تلقائي بالكامل (استنساخ Git + تجهيز .env + تثبيت Docker + إعداد Nginx Reverse Proxy):
+                      # الخيار A: نشر فوري تلقائي بالكامل (استنساخ Git + تجهيز .env + إنشاء خدمات Systemd + إعداد Nginx Reverse Proxy):
                     </p>
                     <p className="bg-white dark:bg-slate-900 p-2 rounded border border-slate-200 dark:border-slate-800 select-all font-bold text-slate-800 dark:text-slate-100">
                       sudo bash deploy-hestia.sh {user} {domain}
@@ -794,10 +986,10 @@ export const HestiaConfigModal: React.FC<HestiaConfigModalProps> = ({
                       # الخيار B: التسجيل في متجر هيستيا للتثبيت بالنقرة الواحدة (Quick Install App):
                     </p>
                     <p className="bg-white dark:bg-slate-900 p-2 rounded border border-slate-200 dark:border-slate-800 select-all font-bold text-slate-800 dark:text-slate-100">
-                      sudo bash register-hestia-dvhelp.sh
+                      sudo bash register-hestia-native.sh
                     </p>
                     <p className="bg-white dark:bg-slate-900 p-2 rounded border border-slate-200 dark:border-slate-800 select-all text-emerald-600 dark:text-emerald-400">
-                      # ميزة البنية: Nginx بهيستيا يدير SSL/Let's Encrypt ويوجه إلى Next.js (:3000) و FastAPI (:8000) بدون أي تعارض مع Caddy
+                      # ميزة البنية: خدمات Systemd محلية ترتبط مباشرة بقاعدة بيانات هيستيا 127.0.0.1:5432 بدون Docker
                     </p>
                   </>
                 ) : mode === 'hestia_quick_app' ? (

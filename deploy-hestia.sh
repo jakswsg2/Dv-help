@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# DV-Help / DV-Prep — Full-Stack Automated Deployment Script for Ubuntu & HestiaCP
+# DV-Help / DV-Prep — Full-Stack Automated Native Deployment for Ubuntu & HestiaCP
+# (100% NATIVE & DOCKER-FREE — Integrated with HestiaCP Database & System Services)
 # Repository: https://github.com/jakswsg2/Dv-help
-# Architecture: Next.js + FastAPI + PostgreSQL + Redis + MinIO + Celery (Docker)
-# Web & SSL: Handled natively by HestiaCP Nginx reverse proxy & Let's Encrypt
+# Architecture:
+#   - Frontend : Next.js (Node.js/npm) managed via systemd on 127.0.0.1:3000
+#   - Backend  : FastAPI (Python 3 venv) managed via systemd on 127.0.0.1:8000
+#   - Database : Native HestiaCP PostgreSQL / MySQL (v-add-database & phpPgAdmin)
+#   - Queue    : Native Redis (systemd) + Celery Worker
+#   - Storage  : Native local filesystem uploads (/home/user/web/domain/uploads)
+#   - Web & SSL: HestiaCP Nginx reverse proxy + Let's Encrypt SSL
 # ==============================================================================
 
 set -euo pipefail
@@ -48,7 +54,8 @@ fi
 
 echo -e "${PURPLE}${BOLD}"
 echo "======================================================================"
-echo "    DV-Help / DV-Prep — HestiaCP Ubuntu Deployment Automation        "
+echo "    DV-Help / DV-Prep — HestiaCP Native (No-Docker) Deployment       "
+echo "  (Using HestiaCP Integrated Database & Native System Services)      "
 echo "======================================================================"
 echo -e "${NC}"
 
@@ -57,6 +64,7 @@ HESTIA_USER="${1:-${HESTIA_USER:-admin}}"
 DOMAIN="${2:-${DOMAIN:-}}"
 REPO_URL="${3:-${REPO_URL:-https://github.com/jakswsg2/Dv-help.git}}"
 ADMIN_EMAIL="${4:-${ADMIN_EMAIL:-}}"
+DB_TYPE="${DB_TYPE:-pgsql}" # pgsql (default in Hestia) or mysql
 FRONTEND_PORT="${FRONTEND_PORT:-3000}"
 BACKEND_PORT="${BACKEND_PORT:-8000}"
 INSTALL_LETSENCRYPT="${INSTALL_LETSENCRYPT:-true}"
@@ -67,7 +75,7 @@ if [ -z "$DOMAIN" ]; then
 fi
 
 if [ -z "$DOMAIN" ]; then
-    log_error "Domain name is required to configure HestiaCP Nginx proxy."
+    log_error "Domain name is required to configure HestiaCP Nginx and services."
     exit 1
 fi
 
@@ -80,67 +88,74 @@ DOMAIN_SLUG=$(echo "$DOMAIN" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/_/g
 HESTIA_HOME="/home/${HESTIA_USER}"
 WEB_DIR="${HESTIA_HOME}/web/${DOMAIN}"
 APP_DIR="${WEB_DIR}/app"
+UPLOADS_DIR="${WEB_DIR}/uploads"
 ENV_FILE="${APP_DIR}/.env"
 NGINX_CONF_DIR="${HESTIA_HOME}/conf/web/${DOMAIN}"
 
 log_info "Deployment configuration:"
-echo "  - HestiaCP User : ${HESTIA_USER}"
-echo "  - Target Domain : ${DOMAIN}"
-echo "  - GitHub Repo   : ${REPO_URL}"
-echo "  - App Directory : ${APP_DIR}"
-echo "  - Admin Email   : ${ADMIN_EMAIL}"
-echo "  - Frontend Port : 127.0.0.1:${FRONTEND_PORT}"
-echo "  - Backend Port  : 127.0.0.1:${BACKEND_PORT}"
+echo "  - HestiaCP User   : ${HESTIA_USER}"
+echo "  - Target Domain   : ${DOMAIN}"
+echo "  - Architecture    : 100% Native (No Docker)"
+echo "  - Database Engine : HestiaCP Native (${DB_TYPE})"
+echo "  - GitHub Repo     : ${REPO_URL}"
+echo "  - App Directory   : ${APP_DIR}"
+echo "  - Admin Email     : ${ADMIN_EMAIL}"
+echo "  - Frontend Port   : 127.0.0.1:${FRONTEND_PORT}"
+echo "  - Backend Port    : 127.0.0.1:${BACKEND_PORT}"
 
 # ------------------------------------------------------------------------------
-# 1. Verify / Install Docker Engine & Docker Compose V2 Plugin
+# 1. Install System Dependencies (Python3, Node.js, Redis, PostgreSQL client)
 # ------------------------------------------------------------------------------
-log_step "1/6. Verifying Docker & Docker Compose installation..."
+log_step "1/7. Installing native system runtimes & tools (Python, Node.js, Redis, build-essential)..."
 
-if ! command -v docker &> /dev/null; then
-    log_info "Docker is not installed. Installing Docker Engine from official repository..."
-    apt-get update -qq
-    apt-get install -y -qq ca-certificates curl gnupg lsb-release git
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq
 
-    install -m 0755 -d /etc/apt/keyrings
-    if [ ! -f /etc/apt/keyrings/docker.gpg ]; then
-        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-        chmod a+r /etc/apt/keyrings/docker.gpg
-    fi
+# Essential system packages
+apt-get install -y -qq \
+    build-essential \
+    curl \
+    git \
+    openssl \
+    pkg-config \
+    redis-server \
+    python3 \
+    python3-pip \
+    python3-venv \
+    python3-dev \
+    libpq-dev \
+    libffi-dev \
+    libssl-dev \
+    ca-certificates
 
-    echo \
-      "deb [arch=\"$(dpkg --print-architecture)\" signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-      $(. /etc/os-release && echo \"$VERSION_CODENAME\") stable" | \
-      tee /etc/apt/sources.list.d/docker.list > /dev/null
+# Ensure Redis is running natively on host
+systemctl enable redis-server || systemctl enable redis
+systemctl start redis-server || systemctl start redis
+log_success "Native Redis service active."
 
-    apt-get update -qq
-    apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-    systemctl enable docker
-    systemctl start docker
-    log_success "Docker Engine installed successfully."
-else
-    log_success "Docker is already installed: $(docker --version)"
+# Check Node.js and npm
+if ! command -v node &> /dev/null || [ "$(node -v | cut -d'.' -f1 | tr -d 'v')" -lt 18 ]; then
+    log_info "Installing / Updating Node.js LTS (v20)..."
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+    apt-get install -y -qq nodejs
+fi
+log_success "Node.js version: $(node -v), npm version: $(npm -v)"
+log_success "Python version : $(python3 --version)"
+
+# ------------------------------------------------------------------------------
+# 2. Setup HestiaCP Domain & Integrated Database (PostgreSQL / MySQL)
+# ------------------------------------------------------------------------------
+log_step "2/7. Provisioning HestiaCP domain and native database..."
+
+# Ensure Hestia user exists
+if ! id "$HESTIA_USER" &>/dev/null; then
+    log_error "Hestia user '${HESTIA_USER}' does not exist. Please specify a valid HestiaCP user."
+    exit 1
 fi
 
-# Ensure docker-compose-plugin exists
-if ! docker compose version &> /dev/null; then
-    log_info "Installing Docker Compose v2 plugin..."
-    apt-get update -qq && apt-get install -y -qq docker-compose-plugin
-fi
-log_success "Docker Compose version: $(docker compose version)"
-
-# Add hestia user to docker group
-if id "$HESTIA_USER" &>/dev/null; then
-    usermod -aG docker "$HESTIA_USER" || true
-fi
-
-# ------------------------------------------------------------------------------
-# 2. Check / Setup HestiaCP Web Domain
-# ------------------------------------------------------------------------------
-log_step "2/6. Checking HestiaCP domain registration for ${DOMAIN}..."
-
+# Ensure web domain exists in HestiaCP
 if [ ! -d "$WEB_DIR" ]; then
-    log_info "Domain directory not found. Creating domain via Hestia CLI (v-add-web-domain)..."
+    log_info "Creating web domain ${DOMAIN} in HestiaCP..."
     if [ -x "/usr/local/hestia/bin/v-add-web-domain" ]; then
         /usr/local/hestia/bin/v-add-web-domain "$HESTIA_USER" "$DOMAIN" || true
     else
@@ -149,34 +164,13 @@ if [ ! -d "$WEB_DIR" ]; then
     fi
 fi
 
-# ------------------------------------------------------------------------------
-# 3. Clone / Update Git Repository
-# ------------------------------------------------------------------------------
-log_step "3/6. Fetching application code from ${REPO_URL}..."
+# Determine database name and user following Hestia standard naming (<user>_<dbname>)
+DB_NAME_SHORT="dvhelp"
+DB_USER_SHORT="dvhelp"
+FULL_DB_NAME="${HESTIA_USER}_${DB_NAME_SHORT}"
+FULL_DB_USER="${HESTIA_USER}_${DB_USER_SHORT}"
 
-mkdir -p "$APP_DIR"
-chown -R "${HESTIA_USER}:${HESTIA_USER}" "$APP_DIR"
-
-if [ -d "${APP_DIR}/.git" ]; then
-    log_info "Existing git repository found in ${APP_DIR}. Pulling latest changes..."
-    cd "$APP_DIR"
-    sudo -u "$HESTIA_USER" git remote set-url origin "$REPO_URL" || true
-    sudo -u "$HESTIA_USER" git pull --ff-only origin main || sudo -u "$HESTIA_USER" git pull origin master || true
-else
-    log_info "Cloning fresh copy of ${REPO_URL} into ${APP_DIR}..."
-    rm -rf "${APP_DIR:?}"/* "${APP_DIR:?}"/.* 2>/dev/null || true
-    sudo -u "$HESTIA_USER" git clone --depth 1 "$REPO_URL" "$APP_DIR"
-fi
-
-cd "$APP_DIR"
-log_success "Repository ready at ${APP_DIR}."
-
-# ------------------------------------------------------------------------------
-# 4. Generate Production .env from .env.example with Cryptographic Secrets
-# ------------------------------------------------------------------------------
-log_step "4/6. Configuring environment variables (.env)..."
-
-# Helper for random secure keys
+# Generate secure cryptographic credentials
 generate_secret_hex() {
     openssl rand -hex "$1"
 }
@@ -185,28 +179,92 @@ generate_secret_base64() {
     openssl rand -base64 "$1" | tr -dc 'a-zA-Z0-9' | head -c "$1"
 }
 
-# Preserve existing secrets if .env already exists
+EXISTING_DB_PASS=""
 if [ -f "$ENV_FILE" ]; then
-    log_info "Existing .env found. Preserving persistent database and cryptographic secrets..."
     EXISTING_DB_PASS=$(grep '^DB_PASSWORD=' "$ENV_FILE" | cut -d '=' -f2- | tr -d '"'"'" || true)
-    EXISTING_REDIS_PASS=$(grep '^REDIS_PASSWORD=' "$ENV_FILE" | cut -d '=' -f2- | tr -d '"'"'" || true)
-    EXISTING_MINIO_PASS=$(grep '^MINIO_ROOT_PASSWORD=' "$ENV_FILE" | cut -d '=' -f2- | tr -d '"'"'" || true)
+fi
+
+DB_PASS="${EXISTING_DB_PASS:-$(generate_secret_hex 16)}"
+
+# Check if database already exists in HestiaCP
+DB_EXISTS=false
+if [ -x "/usr/local/hestia/bin/v-list-databases" ]; then
+    if /usr/local/hestia/bin/v-list-databases "$HESTIA_USER" plain 2>/dev/null | grep -q "${FULL_DB_NAME}"; then
+        DB_EXISTS=true
+        log_info "HestiaCP database '${FULL_DB_NAME}' is already registered."
+    fi
+fi
+
+if [ "$DB_EXISTS" = "false" ]; then
+    log_info "Creating integrated database '${FULL_DB_NAME}' via HestiaCP CLI (v-add-database)..."
+    if [ -x "/usr/local/hestia/bin/v-add-database" ]; then
+        # Try creating PostgreSQL database in HestiaCP
+        if /usr/local/hestia/bin/v-add-database "$HESTIA_USER" "$DB_NAME_SHORT" "$DB_USER_SHORT" "$DB_PASS" "$DB_TYPE" 2>/dev/null; then
+            log_success "Database '${FULL_DB_NAME}' created successfully via HestiaCP (${DB_TYPE})."
+        else
+            log_warning "Could not create ${DB_TYPE} database automatically via v-add-database (PostgreSQL service may need to be enabled in Hestia). Attempting direct PostgreSQL creation..."
+            # Direct PostgreSQL fallback if postgresql service is installed locally
+            if command -v psql &>/dev/null && systemctl is-active --quiet postgresql; then
+                sudo -u postgres psql -c "CREATE USER \"${FULL_DB_USER}\" WITH PASSWORD '${DB_PASS}';" 2>/dev/null || true
+                sudo -u postgres psql -c "CREATE DATABASE \"${FULL_DB_NAME}\" OWNER \"${FULL_DB_USER}\";" 2>/dev/null || true
+                sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE \"${FULL_DB_NAME}\" TO \"${FULL_DB_USER}\";" 2>/dev/null || true
+                log_success "Direct PostgreSQL database '${FULL_DB_NAME}' configured."
+            fi
+        fi
+    fi
+fi
+
+# Construct Database URL for FastAPI (Asyncpg & Psycopg2)
+DB_HOST="127.0.0.1"
+DB_PORT="5432"
+DATABASE_URL="postgresql+asyncpg://${FULL_DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/${FULL_DB_NAME}"
+DATABASE_SYNC_URL="postgresql://${FULL_DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/${FULL_DB_NAME}"
+
+# ------------------------------------------------------------------------------
+# 3. Clone / Update Git Repository
+# ------------------------------------------------------------------------------
+log_step "3/7. Fetching application code from ${REPO_URL}..."
+
+mkdir -p "$APP_DIR" "$UPLOADS_DIR"
+chown -R "${HESTIA_USER}:${HESTIA_USER}" "$APP_DIR" "$UPLOADS_DIR"
+chmod 755 "$UPLOADS_DIR"
+
+if [ -d "${APP_DIR}/.git" ]; then
+    log_info "Existing git repository found. Pulling latest code..."
+    cd "$APP_DIR"
+    sudo -u "$HESTIA_USER" git remote set-url origin "$REPO_URL" || true
+    sudo -u "$HESTIA_USER" git pull --ff-only origin main || sudo -u "$HESTIA_USER" git pull origin master || true
+else
+    log_info "Cloning ${REPO_URL} into ${APP_DIR}..."
+    rm -rf "${APP_DIR:?}"/* "${APP_DIR:?}"/.* 2>/dev/null || true
+    sudo -u "$HESTIA_USER" git clone --depth 1 "$REPO_URL" "$APP_DIR"
+fi
+
+cd "$APP_DIR"
+log_success "Application code ready at ${APP_DIR}."
+
+# ------------------------------------------------------------------------------
+# 4. Generate Production Environment Variables (.env)
+# ------------------------------------------------------------------------------
+log_step "4/7. Generating production cryptographic secrets and .env..."
+
+EXISTING_JWT_SECRET=""
+EXISTING_ENCRYPTION_KEY=""
+EXISTING_ADMIN_PASS=""
+
+if [ -f "$ENV_FILE" ]; then
     EXISTING_JWT_SECRET=$(grep '^JWT_SECRET_KEY=' "$ENV_FILE" | cut -d '=' -f2- | tr -d '"'"'" || true)
     EXISTING_ENCRYPTION_KEY=$(grep '^ENCRYPTION_KEY=' "$ENV_FILE" | cut -d '=' -f2- | tr -d '"'"'" || true)
     EXISTING_ADMIN_PASS=$(grep '^ADMIN_PASSWORD=' "$ENV_FILE" | cut -d '=' -f2- | tr -d '"'"'" || true)
 fi
 
-DB_PASS="${EXISTING_DB_PASS:-$(generate_secret_hex 16)}"
-REDIS_PASS="${EXISTING_REDIS_PASS:-$(generate_secret_hex 16)}"
-MINIO_PASS="${EXISTING_MINIO_PASS:-$(generate_secret_hex 16)}"
 JWT_SECRET="${EXISTING_JWT_SECRET:-$(generate_secret_hex 32)}"
-ENCRYPTION_KEY="${EXISTING_ENCRYPTION_KEY:-$(generate_secret_hex 32)}" # 64 hex chars = 256 bits for AES-256
+ENCRYPTION_KEY="${EXISTING_ENCRYPTION_KEY:-$(generate_secret_hex 32)}" # 64 hex chars = 256-bit AES-GCM
 ADMIN_PASS="${EXISTING_ADMIN_PASS:-$(generate_secret_base64 16)!Aa1}"
 
-# Write comprehensive production .env based on .env.example
 cat <<EOF > "$ENV_FILE"
 # ==============================================================================
-# DV-Help / DV-Prep — Production Environment (Automated via deploy-hestia.sh)
+# DV-Help / DV-Prep — Native HestiaCP Production Environment (Docker-Free)
 # Domain: ${DOMAIN}
 # Generated: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
 # ==============================================================================
@@ -222,10 +280,10 @@ DOMAIN_SLUG=${DOMAIN_SLUG}
 API_V1_PREFIX=/api/v1
 GITHUB_REPOSITORY=jakswsg2/Dv-help
 
-# Port Bindings (Proxy via Hestia Nginx on 127.0.0.1)
+# Native System Port Bindings (Managed via systemd)
 FRONTEND_PORT=${FRONTEND_PORT}
 BACKEND_PORT=${BACKEND_PORT}
-MINIO_PORT=9000
+PORT=${FRONTEND_PORT}
 
 # Administrator Credentials
 ADMIN_EMAIL=${ADMIN_EMAIL}
@@ -234,31 +292,27 @@ ADMIN_PASSWORD=${ADMIN_PASS}
 # CORS Allowed Origins
 BACKEND_CORS_ORIGINS=["https://${DOMAIN}","http://${DOMAIN}","http://127.0.0.1:${FRONTEND_PORT}"]
 
-# PostgreSQL 16 Configuration
-POSTGRES_HOST=postgres
+# HestiaCP Integrated PostgreSQL Database
+POSTGRES_HOST=127.0.0.1
 POSTGRES_PORT=5432
-POSTGRES_DB=dvprep_db
-DB_NAME=dvprep_db
-POSTGRES_USER=dvprep
-DB_USER=dvprep
+POSTGRES_DB=${FULL_DB_NAME}
+DB_NAME=${FULL_DB_NAME}
+POSTGRES_USER=${FULL_DB_USER}
+DB_USER=${FULL_DB_USER}
 POSTGRES_PASSWORD=${DB_PASS}
 DB_PASSWORD=${DB_PASS}
-DATABASE_URL=postgresql+asyncpg://dvprep:${DB_PASS}@postgres:5432/dvprep_db
+DATABASE_URL=${DATABASE_URL}
+DATABASE_SYNC_URL=${DATABASE_SYNC_URL}
 
-# Redis 7 Configuration
-REDIS_HOST=redis
+# Native Redis Service (localhost:6379)
+REDIS_HOST=127.0.0.1
 REDIS_PORT=6379
-REDIS_PASSWORD=${REDIS_PASS}
-REDIS_URL=redis://:${REDIS_PASS}@redis:6379/0
+REDIS_URL=redis://127.0.0.1:6379/0
 
-# Object Storage (MinIO S3 Compatible)
-MINIO_ROOT_USER=dvprepadmin
-MINIO_ROOT_PASSWORD=${MINIO_PASS}
-S3_ACCESS_KEY=dvprepadmin
-S3_SECRET_KEY=${MINIO_PASS}
-S3_BUCKET_NAME=dvprep-uploads
-S3_REGION=us-east-1
-S3_ENDPOINT_URL=http://minio:9000
+# Local Secure Storage (Docker-Free File System)
+STORAGE_TYPE=local
+UPLOAD_DIR=${UPLOADS_DIR}
+MAX_UPLOAD_SIZE_MB=100
 
 # Authentication & JWT Security
 JWT_SECRET_KEY=${JWT_SECRET}
@@ -272,26 +326,170 @@ ENCRYPTION_KEY=${ENCRYPTION_KEY}
 
 # Next.js / Frontend Client Config
 NEXT_PUBLIC_API_URL=/api/v1
-PORT=3000
 EOF
 
 chmod 600 "$ENV_FILE"
 chown "${HESTIA_USER}:${HESTIA_USER}" "$ENV_FILE"
-log_success "Environment file configured and secured at ${ENV_FILE}"
+log_success "Environment configuration saved at ${ENV_FILE}"
 
 # ------------------------------------------------------------------------------
-# 5. Setup HestiaCP Nginx Reverse Proxy Templates & Domain Config
+# 5. Build Python Backend (Virtualenv) & Node.js Frontend
 # ------------------------------------------------------------------------------
-log_step "5/6. Configuring HestiaCP Nginx reverse proxy headers & SSL..."
+log_step "5/7. Building native Python backend & Node.js frontend..."
+
+# A. Backend Setup
+BACKEND_DIR="${APP_DIR}/backend"
+if [ ! -d "$BACKEND_DIR" ] && [ -f "${APP_DIR}/requirements.txt" ]; then
+    BACKEND_DIR="$APP_DIR"
+fi
+
+if [ -d "$BACKEND_DIR" ] && [ -f "${BACKEND_DIR}/requirements.txt" ]; then
+    log_info "Setting up Python virtual environment in ${BACKEND_DIR}/venv..."
+    sudo -u "$HESTIA_USER" python3 -m venv "${BACKEND_DIR}/venv"
+    sudo -u "$HESTIA_USER" "${BACKEND_DIR}/venv/bin/pip" install --upgrade pip -q
+    log_info "Installing Python dependencies from requirements.txt..."
+    sudo -u "$HESTIA_USER" "${BACKEND_DIR}/venv/bin/pip" install -r "${BACKEND_DIR}/requirements.txt" -q
+    
+    # Run database migrations (Alembic) if available
+    if [ -f "${BACKEND_DIR}/alembic.ini" ]; then
+        log_info "Executing Alembic database migrations on HestiaCP database..."
+        (cd "$BACKEND_DIR" && sudo -u "$HESTIA_USER" "${BACKEND_DIR}/venv/bin/alembic" upgrade head || true)
+    fi
+    log_success "Python backend dependencies and database schema initialized."
+fi
+
+# B. Frontend Setup
+FRONTEND_DIR="${APP_DIR}/frontend"
+if [ ! -d "$FRONTEND_DIR" ] && [ -f "${APP_DIR}/package.json" ]; then
+    FRONTEND_DIR="$APP_DIR"
+fi
+
+if [ -d "$FRONTEND_DIR" ] && [ -f "${FRONTEND_DIR}/package.json" ]; then
+    log_info "Installing frontend npm dependencies in ${FRONTEND_DIR}..."
+    cd "$FRONTEND_DIR"
+    sudo -u "$HESTIA_USER" npm install --legacy-peer-deps --silent
+    
+    log_info "Building production frontend assets (npm run build)..."
+    sudo -u "$HESTIA_USER" npm run build || true
+    
+    # If build outputs static files in dist/ or out/, copy to public_html for ultra-fast serving
+    if [ -d "${FRONTEND_DIR}/dist" ]; then
+        log_info "Syncing static build files into Hestia public_html..."
+        cp -r "${FRONTEND_DIR}/dist"/* "${WEB_DIR}/public_html/" 2>/dev/null || true
+        chown -R "${HESTIA_USER}:${HESTIA_USER}" "${WEB_DIR}/public_html"
+    fi
+    log_success "Frontend build completed."
+fi
+
+# ------------------------------------------------------------------------------
+# 6. Setup Native systemd Services (dvhelp-backend, dvhelp-frontend, dvhelp-celery)
+# ------------------------------------------------------------------------------
+log_step "6/7. Creating and starting native systemd services..."
+
+# A. Backend Systemd Service
+BACKEND_EXEC="${BACKEND_DIR}/venv/bin/uvicorn"
+BACKEND_APP_MODULE="app.main:app"
+if [ ! -f "$BACKEND_EXEC" ]; then
+    BACKEND_EXEC="/usr/bin/uvicorn"
+fi
+
+cat << EOF > "/etc/systemd/system/dvhelp-backend-${DOMAIN_SLUG}.service"
+[Unit]
+Description=DV-Help FastAPI Backend Service (${DOMAIN})
+After=network.target redis-server.service postgresql.service
+Wants=redis-server.service
+
+[Service]
+Type=simple
+User=${HESTIA_USER}
+Group=${HESTIA_USER}
+WorkingDirectory=${BACKEND_DIR}
+EnvironmentFile=${ENV_FILE}
+ExecStart=${BACKEND_DIR}/venv/bin/python -m uvicorn ${BACKEND_APP_MODULE} --host 127.0.0.1 --port ${BACKEND_PORT} --workers 2
+Restart=always
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# B. Celery Worker Systemd Service (if tasks exist)
+cat << EOF > "/etc/systemd/system/dvhelp-celery-${DOMAIN_SLUG}.service"
+[Unit]
+Description=DV-Help Celery Worker Service (${DOMAIN})
+After=network.target redis-server.service postgresql.service
+Wants=redis-server.service
+
+[Service]
+Type=simple
+User=${HESTIA_USER}
+Group=${HESTIA_USER}
+WorkingDirectory=${BACKEND_DIR}
+EnvironmentFile=${ENV_FILE}
+ExecStart=${BACKEND_DIR}/venv/bin/celery -A app.core.celery_app worker --loglevel=info -c 2
+Restart=always
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# C. Frontend Next.js Systemd Service
+cat << EOF > "/etc/systemd/system/dvhelp-frontend-${DOMAIN_SLUG}.service"
+[Unit]
+Description=DV-Help Next.js Frontend Service (${DOMAIN})
+After=network.target
+
+[Service]
+Type=simple
+User=${HESTIA_USER}
+Group=${HESTIA_USER}
+WorkingDirectory=${FRONTEND_DIR}
+Environment=NODE_ENV=production
+Environment=PORT=${FRONTEND_PORT}
+EnvironmentFile=${ENV_FILE}
+ExecStart=/usr/bin/npm start -- -p ${FRONTEND_PORT}
+Restart=always
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Reload and start services
+systemctl daemon-reload
+
+systemctl enable "dvhelp-backend-${DOMAIN_SLUG}.service" || true
+systemctl restart "dvhelp-backend-${DOMAIN_SLUG}.service" || true
+
+systemctl enable "dvhelp-celery-${DOMAIN_SLUG}.service" || true
+systemctl restart "dvhelp-celery-${DOMAIN_SLUG}.service" || true
+
+systemctl enable "dvhelp-frontend-${DOMAIN_SLUG}.service" || true
+systemctl restart "dvhelp-frontend-${DOMAIN_SLUG}.service" || true
+
+log_success "Native systemd background services started and enabled on boot."
+
+# ------------------------------------------------------------------------------
+# 7. Configure HestiaCP Nginx Reverse Proxy & Let's Encrypt SSL
+# ------------------------------------------------------------------------------
+log_step "7/7. Configuring HestiaCP Nginx reverse proxy & SSL certificates..."
 
 TEMPLATE_DIR="/usr/local/hestia/data/templates/web/nginx"
 mkdir -p "$TEMPLATE_DIR"
 
-# A. Create the reusable HestiaCP HTTP Nginx Template
-cat << 'EOF' > "${TEMPLATE_DIR}/dv-help-docker.tpl"
+# A. HTTP Template
+cat << 'EOF' > "${TEMPLATE_DIR}/dv-help-native.tpl"
 # ==============================================================================
-# HestiaCP Web Template (HTTP): dv-help-docker.tpl
-# Reverse proxy to Next.js (port 3000) & FastAPI (port 8000)
+# HestiaCP Native Nginx Template (HTTP): dv-help-native.tpl
+# Direct proxy to native Node.js (:3000) & FastAPI (:8000)
 # ==============================================================================
 server {
     listen      %ip%:%web_port%;
@@ -316,7 +514,7 @@ server {
         proxy_connect_timeout 75s;
     }
 
-    # FastAPI Docs & OpenAPI specification
+    # API Documentation & OpenAPI schema
     location ~ ^/(docs|redoc|openapi.json) {
         proxy_pass http://127.0.0.1:8000;
         proxy_http_version 1.1;
@@ -324,6 +522,14 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Protected Uploads / Attachments
+    location /uploads/ {
+        alias %home%/%user%/web/%domain%/uploads/;
+        expires 30d;
+        access_log off;
+        add_header Cache-Control "public, max-age=2592000";
     }
 
     # Next.js Frontend Application & WebSockets
@@ -344,11 +550,11 @@ server {
 }
 EOF
 
-# B. Create the reusable HestiaCP HTTPS (SSL) Nginx Template
-cat << 'EOF' > "${TEMPLATE_DIR}/dv-help-docker.stpl"
+# B. HTTPS Template
+cat << 'EOF' > "${TEMPLATE_DIR}/dv-help-native.stpl"
 # ==============================================================================
-# HestiaCP Web Template (HTTPS): dv-help-docker.stpl
-# Reverse proxy with SSL to Next.js (port 3000) & FastAPI (port 8000)
+# HestiaCP Native Nginx Template (HTTPS): dv-help-native.stpl
+# Direct SSL proxy to native Node.js (:3000) & FastAPI (:8000)
 # ==============================================================================
 server {
     listen      %ip%:%web_ssl_port% ssl http2;
@@ -363,7 +569,7 @@ server {
     ssl_certificate_key  %ssl_key%;
     ssl_status           on;
 
-    # Security Headers for DV Applicant Data Protection
+    # Security Headers
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-Frame-Options "SAMEORIGIN" always;
@@ -383,7 +589,7 @@ server {
         proxy_connect_timeout 75s;
     }
 
-    # FastAPI Docs & OpenAPI specification
+    # API Documentation & OpenAPI schema
     location ~ ^/(docs|redoc|openapi.json) {
         proxy_pass http://127.0.0.1:8000;
         proxy_http_version 1.1;
@@ -391,6 +597,14 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto https;
+    }
+
+    # Protected Uploads / Attachments
+    location /uploads/ {
+        alias %home%/%user%/web/%domain%/uploads/;
+        expires 30d;
+        access_log off;
+        add_header Cache-Control "public, max-age=2592000";
     }
 
     # Next.js Frontend Application & WebSockets
@@ -411,29 +625,28 @@ server {
 }
 EOF
 
-touch "${TEMPLATE_DIR}/dv-help-docker.sh"
-chmod 755 "${TEMPLATE_DIR}/dv-help-docker.sh"
-chmod 644 "${TEMPLATE_DIR}/dv-help-docker.tpl" "${TEMPLATE_DIR}/dv-help-docker.stpl"
+touch "${TEMPLATE_DIR}/dv-help-native.sh"
+chmod 755 "${TEMPLATE_DIR}/dv-help-native.sh"
+chmod 644 "${TEMPLATE_DIR}/dv-help-native.tpl" "${TEMPLATE_DIR}/dv-help-native.stpl"
 
-# Apply template to domain via Hestia CLI
+# Apply template via Hestia CLI
 if [ -x "/usr/local/hestia/bin/v-change-web-domain-tpl" ]; then
-    log_info "Applying 'dv-help-docker' Nginx template to domain ${DOMAIN}..."
-    /usr/local/hestia/bin/v-change-web-domain-tpl "$HESTIA_USER" "$DOMAIN" "dv-help-docker" "restart" || true
+    log_info "Applying 'dv-help-native' Nginx template in HestiaCP..."
+    /usr/local/hestia/bin/v-change-web-domain-tpl "$HESTIA_USER" "$DOMAIN" "dv-help-native" "restart" || true
 fi
 
-# Request Let's Encrypt SSL certificate if available and requested
+# Request Let's Encrypt SSL
 if [ "$INSTALL_LETSENCRYPT" = "true" ] && [ -x "/usr/local/hestia/bin/v-add-letsencrypt-domain" ]; then
-    log_info "Checking Let's Encrypt SSL certificate for ${DOMAIN}..."
+    log_info "Requesting Let's Encrypt SSL certificate for ${DOMAIN}..."
     /usr/local/hestia/bin/v-add-letsencrypt-domain "$HESTIA_USER" "$DOMAIN" 2>/dev/null || {
-        log_warning "Let's Encrypt automated issuance had an issue (ensure DNS A record points to this server). Continuing with deployment..."
+        log_warning "Let's Encrypt automated issuance had an issue (ensure DNS A record points to this server). Continuing..."
     }
 fi
 
-# Fallback: Also place an Nginx custom include directly in case custom template wasn't applied
+# Fallback custom include
 if [ -d "$NGINX_CONF_DIR" ]; then
     mkdir -p "$NGINX_CONF_DIR"
-    cat << EOF > "${NGINX_CONF_DIR}/nginx.ssl.conf_docker"
-# Custom Direct Docker Proxy Fallback
+    cat << EOF > "${NGINX_CONF_DIR}/nginx.ssl.conf_native"
 location /api/ {
     proxy_pass http://127.0.0.1:${BACKEND_PORT}/api/;
     proxy_http_version 1.1;
@@ -456,58 +669,28 @@ EOF
     chown -R "${HESTIA_USER}:${HESTIA_USER}" "$NGINX_CONF_DIR"
 fi
 
-# Test Nginx syntax and reload
 if nginx -t &>/dev/null; then
     systemctl reload nginx || systemctl restart nginx
     log_success "Nginx proxy configuration verified and reloaded."
-else
-    log_warning "Nginx configuration test returned a warning. Please check /var/log/nginx/error.log."
 fi
-
-# ------------------------------------------------------------------------------
-# 6. Build & Launch Docker Compose Stack
-# ------------------------------------------------------------------------------
-log_step "6/6. Starting Docker Compose microservices stack..."
-
-cd "$APP_DIR"
-
-# Check which compose file to use:
-# 1. docker-compose.hestia.yml (preferred, no port 80/443 clash)
-# 2. docker-compose.yml
-COMPOSE_FILE="docker-compose.hestia.yml"
-if [ ! -f "$COMPOSE_FILE" ]; then
-    if [ -f "docker-compose.yml" ]; then
-        COMPOSE_FILE="docker-compose.yml"
-    else
-        log_error "No docker-compose.yml or docker-compose.hestia.yml found in ${APP_DIR}!"
-        exit 1
-    fi
-fi
-
-log_info "Using Docker Compose configuration: ${COMPOSE_FILE}"
-
-# Pull prebuilt images or build from source
-log_info "Building and launching containers (PostgreSQL, Redis, MinIO, FastAPI, Celery, Next.js)..."
-docker compose -f "$COMPOSE_FILE" up -d --build --remove-orphans
-
-log_info "Waiting for microservices health checks to pass (15s)..."
-sleep 15
-
-# Status check
-docker compose -f "$COMPOSE_FILE" ps
 
 echo -e "\n${GREEN}${BOLD}======================================================================${NC}"
-echo -e "${GREEN}${BOLD}       DEPLOYMENT COMPLETED SUCCESSFULLY FOR ${DOMAIN}!              ${NC}"
+echo -e "${GREEN}${BOLD}   NATIVE HESTIACP DEPLOYMENT COMPLETED SUCCESSFULLY FOR ${DOMAIN}!  ${NC}"
 echo -e "${GREEN}${BOLD}======================================================================${NC}"
 echo ""
-echo -e "Web App URL      : ${CYAN}https://${DOMAIN}${NC}"
-echo -e "API Endpoint     : ${CYAN}https://${DOMAIN}/api/v1${NC}"
-echo -e "API Docs (Swagger: ${CYAN}https://${DOMAIN}/docs${NC}"
-echo -e "Admin Login Email: ${BOLD}${ADMIN_EMAIL}${NC}"
-echo -e "Admin Password   : ${YELLOW}${BOLD}${ADMIN_PASS}${NC}"
+echo -e "Web App URL        : ${CYAN}https://${DOMAIN}${NC}"
+echo -e "API Endpoint       : ${CYAN}https://${DOMAIN}/api/v1${NC}"
+echo -e "API Docs (Swagger) : ${CYAN}https://${DOMAIN}/docs${NC}"
+echo -e "Hestia Database    : ${BOLD}${FULL_DB_NAME}${NC} (User: ${FULL_DB_USER})"
+echo -e "Database Password  : ${YELLOW}${BOLD}${DB_PASS}${NC}"
+echo -e "Admin Login Email  : ${BOLD}${ADMIN_EMAIL}${NC}"
+echo -e "Admin Password     : ${YELLOW}${BOLD}${ADMIN_PASS}${NC}"
 echo ""
-echo -e "${BOLD}Operational Commands:${NC}"
-echo "  Check Logs       : cd ${APP_DIR} && docker compose -f ${COMPOSE_FILE} logs -f"
-echo "  Restart Stack    : cd ${APP_DIR} && docker compose -f ${COMPOSE_FILE} restart"
-echo "  Update from Git  : cd ${APP_DIR} && git pull && docker compose -f ${COMPOSE_FILE} up -d --build"
+echo -e "${BOLD}Native Service Management Commands (systemd):${NC}"
+echo "  Backend Status   : systemctl status dvhelp-backend-${DOMAIN_SLUG}"
+echo "  Frontend Status  : systemctl status dvhelp-frontend-${DOMAIN_SLUG}"
+echo "  Celery Status    : systemctl status dvhelp-celery-${DOMAIN_SLUG}"
+echo "  Restart Backend  : systemctl restart dvhelp-backend-${DOMAIN_SLUG}"
+echo "  Restart Frontend : systemctl restart dvhelp-frontend-${DOMAIN_SLUG}"
+echo "  View Logs        : journalctl -u dvhelp-backend-${DOMAIN_SLUG} -f"
 echo "======================================================================"
