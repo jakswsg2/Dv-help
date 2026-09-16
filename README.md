@@ -17,95 +17,79 @@
 ---
 
 ## 2. الهيكلية المعمارية (Architecture)
-
 ```text
-                                  Internet
-                                     │
-                                     ▼
-                             ┌───────────────┐
-                             │    Nginx      │
-                             │ Reverse Proxy │
-                             └───────┬───────┘
-                                     │
-                       ┌─────────────┴─────────────┐
-                       ▼                           ▼
-                ┌──────────────┐             ┌──────────────┐
-                │   Next.js    │             │   FastAPI    │
-                │   Frontend   │             │    API       │
-                └──────────────┘             └──────┬───────┘
-                                                    │
-                           ┌────────────────────────┼─────────────────┐
-                           ▼                        ▼                 ▼
-                     PostgreSQL                  Redis          Object Storage
-                     Database                    Queue              MinIO/S3
-                           │                        │                 │
-                           │                        ▼                 │
-                           │                 ┌─────────────┐          │
-                           │                 │ Celery/RQ   │          │
-                           │                 │ Workers     │          │
-                           │                 └──────┬──────┘          │
-                           │                        │                 │
-                           │              ┌─────────┴─────────┐       │
-                           │              ▼                   ▼       │
-                           │            OCR               Photo AI   │
-                           │                                          
-                           └───────────────────────────────────────────
+                         المتصفح (Browser)
+                              │
+                              ▼
+                   ┌─────────────────────┐
+                   │   حاوية Docker        │
+                   │  ┌───────────────┐  │
+                   │  │     Nginx     │  │
+                   │  │  (يقدّم SPA)    │  │
+                   │  └───────┬───────┘  │
+                   │          │          │
+                   │  ملفات ثابتة         │
+                   │  (dist/ — Vite)      │
+                   └──────────┬──────────┘
+                              │
+                              ▼
+                        Firebase (Cloud)
+                      Firestore · Auth
 ```
-
+> التطبيق أحادي الصفحة (SPA) — لا يوجد Backend خاص. كل منطق المعالجة (فحص الصور، تحليل MRZ، محرك التناقضات) يعمل في المتصفح، والبيانات تُحفظ محلياً وتُزامَن مع Firebase Firestore عند توفر الاتصال.
 ---
 
 ## 3. حزمة التقنيات (Tech Stack)
 
-- **Frontend**: Next.js 14/15 (App Router), TypeScript, Tailwind CSS, Lucide Icons, Bilingual RTL (العربية) & LTR (English).
-- **Backend**: Python 3.12+, FastAPI, SQLAlchemy 2 (Async), Pydantic V2, Alembic, OpenCV, Pillow.
-- **Workers & Queues**: Celery + Redis لعمليات الـ OCR والفحص الفني للصور وتوليد التقارير.
-- **Database**: PostgreSQL 16+ (مع دعم التشفير المتماثل AES-256 للحقول الحساسة) مع إمكانية التشغيل السلس على SQLite في بيئات التطوير والاختبار.
-- **Storage**: MinIO (محلياً) أو AWS S3 في بيئة الإنتاج مع روابط موقعة مؤقتة (Presigned URLs).
-- **Security**: تشفير كلمات المرور باستخدام PBKDF2-HMAC-SHA256، مصادقة JWT، حماية CSRF، وصلاحيات RBAC متعددة المستويات.
+- **الواجهة**: Vite + React 18 + TypeScript، Tailwind CSS 4، Lucide Icons، دعم ثنائي اللغة RTL (العربية) و LTR (الإنجليزية).
+- **معالجة الصور والمستندات**: تعمل بالكامل في المتصفح (Canvas API، تحليل MRZ، فحص أبعاد صورة DV).
+- **التخزين والمزامنة**: Firebase Firestore + Firebase Auth (يُستخدَم من العميل مباشرةً).
+- **التغليف والنشر**: صورة Docker واحدة (بناء متعدد المراحل) تُقدّم الملفات الثابتة عبر Nginx.
+- **الأمان**: تشفير الحقول الحساسة داخل العميل، وسجلات تدقيق (`Audit Logs`) للتتبع.
 
 ---
 
 ## 4. خطوات التشغيل (Getting Started)
 
-### الخيار أ: التشغيل المتكامل عبر Docker Compose (البيئة الموصى بها للإنتاج)
+### الخيار أ: التشغيل عبر Docker (البيئة المحلية والإنتاج)
+
+التطبيق واجهة أحادية الصفحة (SPA) مبنية بـ **Vite + React + TypeScript**، وتتصل
+مباشرةً بـ **Firebase** (Firestore / Auth) من داخل المتصفح. لذلك الحزمة كاملة هي
+**خدمة واحدة**: تُبنى الأصول الثابتة ثم تُقدَّم عبر Nginx داخل الحاوية.
 
 1. تأكد من تثبيت Docker و Docker Compose على جهازك.
-2. قم بإنشاء ملف `.env` اعتماداً على النموذج:
+2. بناء وتشغيل الـ App:
    ```bash
-   cp .env.example .env
+   docker compose up --build
    ```
-3. تشغيل الحاويات بالكامل في الخلفية:
+3. الوصول إلى التطبيق:
+   - **الواجهة**: `http://localhost:8080`
+
+The app is served on port `8080` by default. Change it with `APP_PORT`:
    ```bash
-   docker compose up --build -d
+   APP_PORT=9090 docker compose up --build
    ```
-4. الوصول إلى المنظومة:
-   - **الواجهة الأمامية للمتقدم**: `http://localhost` أو `http://localhost:3000`
-   - **توثيق الواجهة البرمجية (Swagger UI)**: `http://localhost/docs` أو `http://localhost:8000/docs`
-   - **لوحة تحكم MinIO التخزينية**: `http://localhost:9001`
+4. للإنتاج (خلف وكيل عكسي مع TLS):
+   ```bash
+   docker compose -f docker-compose.prod.yml up --build -d
+   ```
+
+> لا حاجة لأي حاويات Backend/قاعدة بيانات/Redis/MinIO: منطق المعالجة (فحص الصور،
+> تحليل MRZ، محرك التناقضات) يعمل بالكامل في المتصفح، والتخزين يتم عبر Firebase.
 
 ---
 
 ### الخيار ب: التشغيل المحلي في بيئة التطوير (Local Development)
 
-#### 1. تشغيل الـ Backend (FastAPI):
-```bash
-cd backend
-python -m venv venv
-# في نظام Windows PowerShell:
-.\venv\Scripts\Activate.ps1
+يتطلب Node.js 20+.
 
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
-```
-- يعمل الخادم تلقائياً على `http://localhost:8000`، وينشئ قاعدة البيانات والبيانات الأولية (Seed Data) تلقائياً عند أول تشغيل.
-
-#### 2. تشغيل الـ Frontend (Next.js):
 ```bash
-cd frontend
-npm.cmd install
-npm.cmd run dev
+npm install
+npm run dev
 ```
-- يعمل تطبيق الويب على `http://localhost:3000` مع دعم التحويل اللحظي بين العربية والإنجليزية وتغيير اتجاه الصفحة RTL/LTR.
+
+- يعمل التطبيق على `http://localhost:3000` مع دعم التحويل اللحظي بين العربية والإنجليزية وتغيير اتجاه الصفحة RTL/LTR.
+- البديل: `npm run build` ثم `npm run preview` لمعاينة نسخة الإنتاج.
 
 ---
 

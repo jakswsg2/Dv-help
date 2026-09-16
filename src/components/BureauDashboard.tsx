@@ -20,12 +20,10 @@ import {
   X,
   CreditCard,
   UserCheck,
-  Server,
 } from 'lucide-react';
 import { calculateApplicantProgress } from './BureauStats';
 import { DataIntegrityDashboard } from './DataIntegrityDashboard';
 import { DeleteConfirmationModal } from './DeleteConfirmationModal';
-import { HestiaConfigModal } from './HestiaConfigModal';
 
 interface BureauDashboardProps {
   applicants: Applicant[];
@@ -56,7 +54,6 @@ export const BureauDashboard: React.FC<BureauDashboardProps> = ({
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
   const [bureauViewMode, setBureauViewMode] = useState<'INTEGRITY' | 'REGISTRY' | 'COMBINED'>('INTEGRITY');
   const [applicantToDelete, setApplicantToDelete] = useState<Applicant | null>(null);
-  const [isHestiaModalOpen, setIsHestiaModalOpen] = useState(false);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -499,20 +496,6 @@ export const BureauDashboard: React.FC<BureauDashboardProps> = ({
 
                 <button
                   type="button"
-                  onClick={() => setIsHestiaModalOpen(true)}
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-orange-200 dark:border-orange-900/60 bg-orange-50/70 dark:bg-orange-950/30 hover:bg-orange-100 dark:hover:bg-orange-900/50 text-xs font-semibold text-orange-700 dark:text-orange-300 cursor-pointer transition-colors shadow-2xs"
-                  title={
-                    language === 'ar'
-                      ? 'توليد ملفات إعدادات Nginx و Apache وحزم JSON المتوافقة مع HestiaCP لأوراكل كلاود'
-                      : 'Generate HestiaCP Nginx/Apache configuration for Oracle Cloud instance'
-                  }
-                >
-                  <Server className="w-3.5 h-3.5 text-orange-600 dark:text-orange-400" />
-                  <span>{t.hestiaConfig}</span>
-                </button>
-
-                <button
-                  type="button"
                   onClick={onNewApplicant}
                   className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors cursor-pointer"
                 >
@@ -871,13 +854,6 @@ export const BureauDashboard: React.FC<BureauDashboardProps> = ({
         language={language}
       />
 
-      {/* HestiaCP Configuration & Hosting Generator Dialog */}
-      <HestiaConfigModal
-        isOpen={isHestiaModalOpen}
-        onClose={() => setIsHestiaModalOpen(false)}
-        applicants={applicants}
-        language={language}
-      />
     </div>
   );
 };
