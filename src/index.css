@@ -1,0 +1,304 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  html {
+    font-family: 'Cairo', 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    scroll-behavior: smooth;
+  }
+
+  html.dark,
+  html.dark body {
+    background-color: #090d16;
+    color: #f1f5f9;
+  }
+}
+
+/* Custom scrollbars for data tables and panels */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+.dark ::-webkit-scrollbar-track {
+  background: #0f172a;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: #334155;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+
+/* Dark mode surface refinements */
+.dark .bg-white {
+  background-color: #111827;
+}
+
+.dark .bg-slate-50 {
+  background-color: #0b1120;
+}
+
+.dark .bg-slate-100 {
+  background-color: #1e293b;
+}
+
+.dark .bg-slate-200 {
+  background-color: #334155;
+}
+
+.dark .border-slate-200 {
+  border-color: #1f293d;
+}
+
+.dark .border-slate-300 {
+  border-color: #334155;
+}
+
+.dark .text-slate-900 {
+  color: #f8fafc;
+}
+
+.dark .text-slate-800 {
+  color: #f1f5f9;
+}
+
+.dark .text-slate-700 {
+  color: #cbd5e1;
+}
+
+.dark .text-slate-600 {
+  color: #94a3b8;
+}
+
+.dark .text-slate-500 {
+  color: #64748b;
+}
+
+/* Dark mode inputs, selects & form controls */
+.dark input[type="text"],
+.dark input[type="email"],
+.dark input[type="number"],
+.dark input[type="tel"],
+.dark input[type="date"],
+.dark select,
+.dark textarea {
+  background-color: #0f172a;
+  border-color: #334155;
+  color: #f8fafc;
+}
+
+.dark input::placeholder,
+.dark textarea::placeholder {
+  color: #64748b;
+}
+
+.dark input:focus,
+.dark select:focus,
+.dark textarea:focus {
+  background-color: #1e293b;
+  border-color: #3b82f6;
+}
+
+/* Auto-Focus Highlight & Ripple Animation */
+@keyframes autoFocusPulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7);
+    border-color: #3b82f6;
+  }
+  35% {
+    box-shadow: 0 0 0 5px rgba(59, 130, 246, 0.3);
+    border-color: #2563eb;
+    background-color: rgba(239, 246, 255, 0.8);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
+  }
+}
+
+.autofocus-pulse {
+  animation: autoFocusPulse 0.75s ease-out;
+}
+
+.dark .autofocus-pulse {
+  animation: autoFocusPulseDark 0.75s ease-out;
+}
+
+@keyframes autoFocusPulseDark {
+  0% {
+    box-shadow: 0 0 0 0 rgba(96, 165, 250, 0.8);
+    border-color: #60a5fa;
+  }
+  35% {
+    box-shadow: 0 0 0 5px rgba(96, 165, 250, 0.35);
+    border-color: #3b82f6;
+    background-color: rgba(30, 58, 138, 0.4);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(96, 165, 250, 0);
+  }
+}
+
+/* Dark mode banners & callouts */
+.dark .bg-blue-50\/60,
+.dark .bg-blue-50 {
+  background-color: rgba(30, 58, 138, 0.25);
+  border-color: rgba(59, 130, 246, 0.35);
+}
+.dark .text-blue-950,
+.dark .text-blue-900 {
+  color: #93c5fd;
+}
+.dark .text-blue-800 {
+  color: #bfdbfe;
+}
+
+.dark .bg-amber-50\/60,
+.dark .bg-amber-50,
+.dark .bg-amber-50\/90 {
+  background-color: rgba(120, 53, 15, 0.25);
+  border-color: rgba(245, 158, 11, 0.35);
+}
+.dark .text-amber-950,
+.dark .text-amber-900 {
+  color: #fde68a;
+}
+.dark .text-amber-800 {
+  color: #fef08a;
+}
+.dark .text-amber-700 {
+  color: #fcd34d;
+}
+
+.dark .bg-emerald-50 {
+  background-color: rgba(6, 78, 59, 0.25);
+  border-color: rgba(16, 185, 129, 0.35);
+}
+.dark .text-emerald-950,
+.dark .text-emerald-900,
+.dark .text-emerald-800 {
+  color: #a7f3d0;
+}
+
+.dark .bg-rose-50 {
+  background-color: rgba(136, 19, 55, 0.25);
+  border-color: rgba(244, 63, 94, 0.35);
+}
+.dark .text-rose-950,
+.dark .text-rose-900,
+.dark .text-rose-800 {
+  color: #fecdd3;
+}
+
+/* Dedicated Print Styles for High-Fidelity PDF & Physical Output */
+@media print {
+  @page {
+    margin: 1cm;
+    size: A4 portrait;
+  }
+
+  html,
+  body,
+  #root,
+  main {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    font-size: 10pt !important;
+    line-height: 1.35 !important;
+    overflow: visible !important;
+    height: auto !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  /* Hide app navigation, headers, wizard steps bar, floating bottom bar, banners, buttons, modals */
+  header,
+  nav,
+  aside,
+  footer,
+  .no-print,
+  button,
+  .fixed,
+  .bg-gradient-to-r,
+  .shadow-lg,
+  .shadow-md,
+  .shadow-sm,
+  .shadow-xs,
+  .shadow-2xs,
+  .print\:hidden {
+    display: none !important;
+  }
+
+  /* Hide screen interactive wizard views inside containers during print */
+  .space-y-8 > div:not(.print-only):not(.print-requirements-only),
+  .screen-only {
+    display: none !important;
+  }
+
+  /* Default show print-only unless requirements mode */
+  .print-only {
+    display: block !important;
+    visibility: visible !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    padding: 0 !important;
+    margin: 0 auto !important;
+  }
+
+  .print-requirements-only {
+    display: none !important;
+  }
+
+  /* Mode specific overrides */
+  body.print-requirements-mode .print-only {
+    display: none !important;
+  }
+  body.print-requirements-mode .print-requirements-only {
+    display: block !important;
+    visibility: visible !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    padding: 0 !important;
+    margin: 0 auto !important;
+  }
+
+  body.print-profile-mode .print-requirements-only {
+    display: none !important;
+  }
+  body.print-profile-mode .print-only {
+    display: block !important;
+    visibility: visible !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    padding: 0 !important;
+    margin: 0 auto !important;
+  }
+
+  .print-page-break {
+    page-break-before: always;
+    break-before: page;
+  }
+
+  .print-avoid-break {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  /* Ensure card backgrounds and borders print with high contrast */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+}
+

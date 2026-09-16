@@ -1,0 +1,10 @@
+{
+  "name": "Remix Remix Dv-help",
+  "description": "منصة تجهيز وإدارة بيانات متقدمي برنامج الهجرة العشوائية الأمريكي (DV) - DV Applicant Preparation & Official Submission Assistant",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

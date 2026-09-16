@@ -1,0 +1,30 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    match /applicants/{applicantId} {
+      function isValidId(id) {
+        return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+      }
+
+      function isValidApplicant(data) {
+        return data is map &&
+          (!('id' in data) || (data.id is string && data.id.size() <= 128)) &&
+          (!('firstName' in data) || (data.firstName is string && data.firstName.size() <= 150)) &&
+          (!('lastName' in data) || (data.lastName is string && data.lastName.size() <= 150)) &&
+          (!('email' in data) || (data.email is string && data.email.size() <= 200));
+      }
+
+      allow get: if isValidId(applicantId);
+      allow list: if true;
+      allow create: if isValidId(applicantId) && isValidApplicant(request.resource.data);
+      allow update: if isValidId(applicantId) && isValidApplicant(request.resource.data);
+      allow delete: if isValidId(applicantId);
+    }
+  }
+}
+

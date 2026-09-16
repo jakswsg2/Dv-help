@@ -1,0 +1,71 @@
+# ===============================================================
+#  DV-Prep .gitignore
+#  لا ترفع أبداً: ملفات الأسرار، قواعد البيانات، الـ Uploads، الـ Venv
+# ===============================================================
+
+# ----- Environment & Secrets -----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.cert
+*.crt
+
+# ----- Python -----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+*.log
+*.sqlite
+*.db
+dv_prep.db
+.venv/
+venv/
+env/
+.Python
+.mypy_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+
+# ----- Node.js / Next.js -----
+node_modules/
+.next/
+out/
+.npm
+.yarn-integrity
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ----- Docker -----
+docker-compose.override.yml
+
+# ----- Uploads & User Data (NEVER commit sensitive applicant data) -----
+uploads/
+media/
+files/
+applicants/
+
+# ----- IDE -----
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ----- Alembic (don't commit auto-generated) -----
+backend/app/db/migrations/versions/*.py
+
+# ----- Logs -----
+*.log
+logs/

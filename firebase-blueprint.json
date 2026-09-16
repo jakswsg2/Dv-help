@@ -1,0 +1,23 @@
+{
+  "entities": {
+    "Applicant": {
+      "title": "Applicant",
+      "description": "Diversity Visa applicant profile and DS-5501 application data",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "firstName": { "type": "string" },
+        "lastName": { "type": "string" },
+        "birthCountry": { "type": "string" },
+        "email": { "type": "string" }
+      },
+      "required": ["id", "firstName", "lastName"]
+    }
+  },
+  "firestore": {
+    "/applicants/{applicantId}": {
+      "schema": "Applicant",
+      "description": "Applicant documents stored securely in Firestore"
+    }
+  }
+}
