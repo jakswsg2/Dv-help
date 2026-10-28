@@ -170,7 +170,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               onClick={onNewApplicant}
               title={`${t.newApplicant} (Alt+N)`}
               aria-label={t.newApplicant}
-              className="p-2 text-slate-600 hover:text-blue-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer shrink-0"
+              className="p-2 text-slate-600 hover:text-blue-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer shrink-0 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-hidden"
             >
               <Plus className="w-5 h-5" />
             </button>
@@ -179,7 +179,8 @@ export const Navbar: React.FC<NavbarProps> = ({
             <button
               onClick={onSave}
               title={`${t.saveChanges} (Ctrl+S)`}
-              className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold shadow-xs transition-colors cursor-pointer shrink-0 ${
+              aria-label={t.saveChanges}
+              className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold shadow-xs transition-colors cursor-pointer shrink-0 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-hidden ${
                 hasUnsavedChanges
                   ? 'bg-amber-600 hover:bg-amber-700 text-white'
                   : 'bg-blue-600 hover:bg-blue-700 text-white'
@@ -193,7 +194,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             {/* Theme */}
             <button
               onClick={onToggleTheme}
-              className="p-2 rounded-lg border-slate-200 hover:bg-slate-100 text-slate-700 transition-colors cursor-pointer shrink-0"
+              className="p-2 rounded-lg border-slate-200 hover:bg-slate-100 text-slate-700 transition-colors cursor-pointer shrink-0 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-hidden"
               title={`${theme === 'dark' ? t.lightMode : t.darkMode} (Alt+T)`}
               aria-label={theme === 'dark' ? t.lightMode : t.darkMode}
             >
@@ -207,8 +208,9 @@ export const Navbar: React.FC<NavbarProps> = ({
             {/* Language */}
             <button
               onClick={() => onLanguageChange(language === 'ar' ? 'en' : 'ar')}
-              className="p-2 lg:px-2.5 lg:py-1.5 rounded-lg border-slate-200 hover:bg-slate-100 text-slate-700 text-xs font-bold transition-colors cursor-pointer shrink-0"
+              className="p-2 lg:px-2.5 lg:py-1.5 rounded-lg border-slate-200 hover:bg-slate-100 text-slate-700 text-xs font-bold transition-colors cursor-pointer shrink-0 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-hidden"
               title="تغيير اللغة / Switch Language"
+              aria-label={language === 'ar' ? 'Switch language to English' : 'تغيير اللغة إلى العربية'}
             >
               <Globe className="w-4 h-4 text-slate-500 inline lg:hidden" />
               <span className="hidden lg:inline">{language === 'ar' ? 'English' : 'عربي'}</span>
@@ -221,7 +223,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 onClick={onSignOut}
                 title={t.auth.signOut}
                 aria-label={t.auth.signOut}
-                className="p-2 rounded-lg border-slate-200 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-slate-500 hover:text-rose-600 hover:border-rose-200 transition-colors cursor-pointer shrink-0"
+                className="p-2 rounded-lg border-slate-200 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-slate-500 hover:text-rose-600 hover:border-rose-200 transition-colors cursor-pointer shrink-0 focus-visible:ring-2 focus-visible:ring-rose-500 focus-visible:outline-hidden"
               >
                 <LogOut className="w-4 h-4" />
               </button>
@@ -231,12 +233,13 @@ export const Navbar: React.FC<NavbarProps> = ({
 
         {/* ---------- Row 2: mode tabs + secondary status ---------- */}
         <div className="pb-2 flex-wrap items-center gap-2">
-          <nav className="flex flex-wrap items-center gap-1 bg-slate-100 p-1 rounded-xl border-slate-200 min-w-0">
+          <nav className="flex flex-wrap items-center gap-1 bg-slate-100 p-1 rounded-xl border-slate-200 min-w-0" aria-label="Main Navigation">
             {tabs.map((tab) => (
               <button
                 key={tab.key}
                 onClick={() => onViewChange(tab.key)}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                aria-current={activeView === tab.key ? 'page' : undefined}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-hidden ${
                   activeView === tab.key
                     ? 'bg-white text-blue-700 shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
