@@ -179,6 +179,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <button
               onClick={onSave}
               title={`${t.saveChanges} (Ctrl+S)`}
+              aria-label={t.saveChanges}
               className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold shadow-xs transition-colors cursor-pointer shrink-0 ${
                 hasUnsavedChanges
                   ? 'bg-amber-600 hover:bg-amber-700 text-white'
@@ -209,6 +210,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               onClick={() => onLanguageChange(language === 'ar' ? 'en' : 'ar')}
               className="p-2 lg:px-2.5 lg:py-1.5 rounded-lg border-slate-200 hover:bg-slate-100 text-slate-700 text-xs font-bold transition-colors cursor-pointer shrink-0"
               title="تغيير اللغة / Switch Language"
+              aria-label={language === 'ar' ? 'Switch to English' : 'التغيير إلى العربية'}
             >
               <Globe className="w-4 h-4 text-slate-500 inline lg:hidden" />
               <span className="hidden lg:inline">{language === 'ar' ? 'English' : 'عربي'}</span>
@@ -236,6 +238,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               <button
                 key={tab.key}
                 onClick={() => onViewChange(tab.key)}
+                aria-current={activeView === tab.key ? 'page' : undefined}
                 className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                   activeView === tab.key
                     ? 'bg-white text-blue-700 shadow-xs'
