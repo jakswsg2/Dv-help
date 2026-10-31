@@ -580,28 +580,41 @@ export const StepOfficialSubmissionPrep: React.FC<StepOfficialSubmissionPrepProp
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={() => copyToClipboard(f.id, f.value)}
-                disabled={!f.value || f.value === '—'}
-                className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold shrink-0 flex items-center gap-1 transition-all ${
-                  copiedKey === f.id
-                    ? 'bg-emerald-600 text-white'
-                    : 'bg-white border border-slate-300 hover:bg-slate-100 text-slate-700'
-                }`}
-              >
-                {copiedKey === f.id ? (
-                  <>
-                    <Check className="w-3 h-3" />
-                    <span>{t.copied}</span>
-                  </>
-                ) : (
-                  <>
-                    <Copy className="w-3 h-3" />
-                    <span>{t.copyField}</span>
-                  </>
-                )}
-              </button>
+              {(() => {
+                const isFieldEmpty = !f.value || f.value === '—';
+                const isCopied = copiedKey === f.id;
+                const actionLabel = isCopied
+                  ? (language === 'ar' ? `تم نسخ: ${f.num} ${f.label}` : `Copied: ${f.num} ${f.label}`)
+                  : (language === 'ar' ? `نسخ: ${f.num} ${f.label}` : `Copy: ${f.num} ${f.label}`);
+                const disabledTooltip = language === 'ar' ? 'الحقل فارغ — يرجى تعبئته أولاً' : 'Field is empty — please fill in first';
+
+                return (
+                  <button
+                    type="button"
+                    onClick={() => copyToClipboard(f.id, f.value)}
+                    disabled={isFieldEmpty}
+                    aria-label={actionLabel}
+                    title={isFieldEmpty ? disabledTooltip : actionLabel}
+                    className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold shrink-0 flex items-center gap-1 transition-all cursor-pointer focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-hidden active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-auto ${
+                      isCopied
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-white border border-slate-300 hover:bg-slate-100 text-slate-700'
+                    }`}
+                  >
+                    {isCopied ? (
+                      <>
+                        <Check className="w-3 h-3" />
+                        <span>{t.copied}</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3 h-3" />
+                        <span>{t.copyField}</span>
+                      </>
+                    )}
+                  </button>
+                );
+              })()}
             </div>
           ))}
         </div>
