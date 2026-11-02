@@ -2,6 +2,7 @@ export const translations = {
   ar: {
     appTitle: 'DV-Prep',
     appSubtitle: 'منصة تجهيز وإدارة بيانات متقدمي برنامج تأشيرة التنوع (DV)',
+    skipToContent: 'الانتقال إلى المحتوى الرئيسي',
     complianceTitle: 'تنبيه أخلاقي وقانوني صارم',
     complianceNotice:
       'المنصة أداة إدارية لتجهيز وتدقيق ومطابقة البيانات فقط وليست جهة تسجيل رسمية. وزارة الخارجية الأمريكية هي الجهة الرسمية الوحيدة عبر الموقع dvprogram.state.gov. لا يتم استخدام أي ذكاء اصطناعي لتعديل أو تجميل ملامح الوجه إطلاقاً.',
@@ -555,6 +556,7 @@ export const translations = {
   en: {
     appTitle: 'DV-Prep',
     appSubtitle: 'Diversity Visa (DV) Applicant Preparation & Management Platform',
+    skipToContent: 'Skip to main content',
     complianceTitle: 'Strict Legal & Ethical Compliance Notice',
     complianceNotice:
       'This platform is an administrative preparation and data verification tool only, NOT an official submission agency. The U.S. Department of State is the sole authority via dvprogram.state.gov. No AI face alterations or beautification filters are ever applied.',
