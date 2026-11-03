@@ -74,6 +74,24 @@ export const LiveCameraCapture: React.FC<LiveCameraCaptureProps> = ({
     }
   };
 
+  // Lock body scroll while modal is active & listen for Escape key
+  useEffect(() => {
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !processing) {
+        onClose();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [onClose, processing]);
+
   useEffect(() => {
     startCamera(facingMode);
 
@@ -146,20 +164,31 @@ export const LiveCameraCapture: React.FC<LiveCameraCaptureProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="live-camera-title"
+      className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4"
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !processing) {
+          onClose();
+        }
+      }}
+    >
       <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-xl w-full overflow-hidden shadow-2xl flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-slate-800 text-white">
           <div className="flex items-center gap-2">
             <Camera className="w-5 h-5 text-blue-400" />
-            <h3 className="font-bold text-sm sm:text-base">
+            <h3 id="live-camera-title" className="font-bold text-sm sm:text-base">
               {isAr ? 'كاميرا التصوير المباشر مع دليل الأبعاد' : 'Live Camera with DOS Framing Guide'}
             </h3>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
+            aria-label={isAr ? 'إغلاق الكاميرا' : 'Close live camera'}
+            className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -303,12 +332,14 @@ export const LiveCameraCapture: React.FC<LiveCameraCaptureProps> = ({
               <button
                 type="button"
                 onClick={() => setShowOverlay(!showOverlay)}
-                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg font-semibold border ${
+                aria-pressed={showOverlay}
+                aria-label={isAr ? 'تبديل دليل الأبعاد' : 'Toggle Proportional Overlay'}
+                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg font-semibold border transition-all cursor-pointer ${
                   showOverlay
                     ? 'bg-blue-600 text-white border-blue-500'
                     : 'bg-slate-800 text-slate-400 border-slate-700'
                 }`}
-                title="Toggle Proportional Overlay"
+                title={isAr ? 'دليل الأبعاد' : 'Toggle Proportional Overlay'}
               >
                 <Eye className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">{isAr ? 'دليل الأبعاد' : 'Guides'}</span>
@@ -318,8 +349,9 @@ export const LiveCameraCapture: React.FC<LiveCameraCaptureProps> = ({
               <button
                 type="button"
                 onClick={toggleFacingMode}
-                className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-750 text-slate-300 border border-slate-700 rounded-lg font-semibold"
-                title="Switch Camera"
+                aria-label={isAr ? 'تبديل اتجاه الكاميرا' : 'Switch camera orientation'}
+                className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-750 text-slate-300 border border-slate-700 rounded-lg font-semibold transition-colors cursor-pointer"
+                title={isAr ? 'قلب الكاميرا' : 'Switch Camera'}
               >
                 <RotateCw className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">{isAr ? 'قلب الكاميرا' : 'Flip'}</span>
