@@ -480,6 +480,14 @@ const AuthenticatedApp: React.FC<{ language: Language; onLanguageChange: (l: Lan
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col antialiased">
+      {/* Skip to Main Content Link for Keyboard and Screen Reader Accessibility */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:start-3 focus:z-50 focus:px-4 focus:py-2 focus:bg-blue-600 focus:text-white focus:font-bold focus:text-xs sm:focus:text-sm focus:rounded-xl focus:shadow-lg focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2"
+      >
+        {t.skipToContent}
+      </a>
+
       {/* Network Offline / Status Banner */}
       <NetworkStatusBanner
         isOnline={isOnline}
@@ -530,7 +538,11 @@ const AuthenticatedApp: React.FC<{ language: Language; onLanguageChange: (l: Lan
       )}
 
       {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6 pb-24 sm:pb-28">
+      <main
+        id="main-content"
+        tabIndex={-1}
+        className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6 pb-24 sm:pb-28 outline-none"
+      >
         {activeView === 'WHATSAPP' && canViewWhatsApp ? (
           <WhatsAppSettingsPanel language={language} workspaceId={workspaceId} />
         ) : activeView === 'ROLES' && canViewRoles ? (
